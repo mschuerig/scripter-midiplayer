@@ -368,3 +368,12 @@ test("zero-length note round-trips with note-off strictly after note-on", functi
   expect(parsed.notes[0].startTick).toBe(0);
   expect(parsed.notes[0].endTick).toBeGreaterThan(0);
 });
+
+// ---------------------------------------------------------------------------
+// Single-file bundle stays in sync with the separate player source
+// ---------------------------------------------------------------------------
+
+test("PLAYER_TEMPLATE matches midi-player.js (run `bun run midi2scripter.js build` if this fails)", function () {
+  var player = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
+  expect(C.PLAYER_TEMPLATE).toBe(player);
+});

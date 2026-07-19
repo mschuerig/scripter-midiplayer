@@ -17,7 +17,7 @@ warnings: ['oversized']
 
 **Problem:** The player's `PATTERN` must be hand-authored; baking a Drummer/MuseScore MIDI groove into it is manual and error-prone, and there is no way back from a script to a MIDI file for further editing in Logic.
 
-**Approach:** A dependency-free **bun CLI**, `scripter/midi2scripter.js`, that (1) converts a Standard MIDI File into a *complete, ready-to-load* copy of the player script with the groove baked into its `PATTERN`/`LOOP_BEATS` block, (2) refreshes the player engine in an existing script from the template while keeping that script's own pattern, and (3) converts a script back to a MIDI file. Machine-readable sentinel comments are added to the player so the block can be located, replaced, and re-parsed reliably.
+**Approach:** A dependency-free **bun CLI**, `midi2scripter.js`, that (1) converts a Standard MIDI File into a *complete, ready-to-load* copy of the player script with the groove baked into its `PATTERN`/`LOOP_BEATS` block, (2) refreshes the player engine in an existing script from the template while keeping that script's own pattern, and (3) converts a script back to a MIDI file. Machine-readable sentinel comments are added to the player so the block can be located, replaced, and re-parsed reliably.
 
 ## Boundaries & Constraints
 
@@ -53,33 +53,39 @@ warnings: ['oversized']
 
 ## Code Map
 
-- `scripter/midi2scripter.js` -- NEW. The bun CLI plus the pure core functions; ends with a Node-guarded `module.exports` exposing the core for tests.
-- `scripter/midi2scripter.test.js` -- NEW. `bun:test` unit tests, centred on round-trips (`pattern → SMF → parse → pattern` and `template → replace → parse → pattern`) and the error/edge cases from the I/O matrix.
-- `scripter/midi-player.js` -- MODIFIED. Add `// MIDI-PLAYER:PATTERN-START` immediately before `var PATTERN = [` and `// MIDI-PLAYER:PATTERN-END` immediately after `var LOOP_BEATS = ...;` (both inside the existing EDIT-THIS banner, human doc comment preserved above). No engine/logic change; `eventsInBlock` and `module.exports` untouched.
-- `scripter/midi-player.test.js` -- unchanged; it depends only on `eventsInBlock`, so the sentinels do not affect it (verify it still passes).
+- `midi2scripter.js` -- NEW. The bun CLI plus the pure core functions; ends with a Node-guarded `module.exports` exposing the core for tests.
+- `midi2scripter.test.js` -- NEW. `bun:test` unit tests, centred on round-trips (`pattern → SMF → parse → pattern` and `template → replace → parse → pattern`) and the error/edge cases from the I/O matrix.
+- `midi-player.js` -- MODIFIED. Add `// MIDI-PLAYER:PATTERN-START` immediately before `var PATTERN = [` and `// MIDI-PLAYER:PATTERN-END` immediately after `var LOOP_BEATS = ...;` (both inside the existing EDIT-THIS banner, human doc comment preserved above). No engine/logic change; `eventsInBlock` and `module.exports` untouched.
+- `midi-player.test.js` -- unchanged; it depends only on `eventsInBlock`, so the sentinels do not affect it (verify it still passes).
 
 ## Tasks & Acceptance
 
 **Execution:**
-- [x] `scripter/midi-player.js` -- add the two sentinel comment lines (`// MIDI-PLAYER:PATTERN-START` / `// MIDI-PLAYER:PATTERN-END`) bracketing the `PATTERN`…`LOOP_BEATS` region. No other change.
-- [x] `scripter/midi2scripter.js` -- implement the pure core and the CLI. Pure functions (all exported): `parseSmf(bytes)` → `{ ppq, timeSigNum, timeSigDen, tempoBpm, notes:[{pitch,velocity,startTick,endTick,channel}] }` (MThd/MTrk chunks, variable-length delta times, running status, note-on vel 0 = note-off paired per channel+pitch, meta set-tempo 0x51 / time-sig 0x58 / end-of-track 0x2F, skip other meta/sysex by length, merge all tracks; reject SMPTE division); `notesToPattern(parsed, opts)` → `{ pattern, loopBeats }` (beat = tick/ppq; `offset` normalized into `[0, loopBeats)`; `length` = (endTick−startTick)/ppq; `loopBeats` = `opts.loopBeats` else max end-beat rounded up to a whole bar with `beatsPerBar = timeSigNum*4/timeSigDen`, min 1; round beats to 1e-6; sort by offset); `renderPatternBlock(pattern, loopBeats)` → player-style JS string; `replacePatternBlock(scriptText, blockText)` → script with the marker region replaced (throw if markers absent/duplicated); `extractPatternBlock(scriptText)` → the verbatim text between the markers (throw if absent/duplicated); `parsePatternFromScript(scriptText)` → `{ pattern, loopBeats }` (restricted numeric parse between markers; throw if malformed); `patternToSmf(pattern, loopBeats, opts)` → `Uint8Array` (SMF format 0, one MTrk, `ppq` default 480, `tempoBpm` default 120, `loops` default 1; absolute-tick note on/off, sorted, delta-encoded, end-of-track). CLI: `to-script <in.mid> [-o out.js] [--loop-beats N] [--template path]` (default template = `scripter/midi-player.js`), `update <script.js> [--template path] [-o out.js]` (refresh engine from template, keep the script's pattern; default writes in place), `to-midi <script.js> [-o out.mid] [--tempo BPM] [--ppq N] [--loops N]`, and `--help`; clear errors + nonzero exit on bad input; guarded `module.exports` for the core.
-- [x] `scripter/midi2scripter.test.js` -- `bun:test` covering: `patternToSmf`→`parseSmf`+`notesToPattern` round-trips a known pattern (pitches, offsets, lengths within 1e-6, loopBeats); `replacePatternBlock(template, renderPatternBlock(P))` then `parsePatternFromScript` returns `P`; `replacePatternBlock` throws when markers are missing; running-status/vel-0 SMF parses; SMPTE division rejected; empty-notes rejected; `renderPatternBlock` output matches the player's formatting (key order, no trailing comma).
+- [x] `midi-player.js` -- add the two sentinel comment lines (`// MIDI-PLAYER:PATTERN-START` / `// MIDI-PLAYER:PATTERN-END`) bracketing the `PATTERN`…`LOOP_BEATS` region. No other change.
+- [x] `midi2scripter.js` -- implement the pure core and the CLI. Pure functions (all exported): `parseSmf(bytes)` → `{ ppq, timeSigNum, timeSigDen, tempoBpm, notes:[{pitch,velocity,startTick,endTick,channel}] }` (MThd/MTrk chunks, variable-length delta times, running status, note-on vel 0 = note-off paired per channel+pitch, meta set-tempo 0x51 / time-sig 0x58 / end-of-track 0x2F, skip other meta/sysex by length, merge all tracks; reject SMPTE division); `notesToPattern(parsed, opts)` → `{ pattern, loopBeats }` (beat = tick/ppq; `offset` normalized into `[0, loopBeats)`; `length` = (endTick−startTick)/ppq; `loopBeats` = `opts.loopBeats` else max end-beat rounded up to a whole bar with `beatsPerBar = timeSigNum*4/timeSigDen`, min 1; round beats to 1e-6; sort by offset); `renderPatternBlock(pattern, loopBeats)` → player-style JS string; `replacePatternBlock(scriptText, blockText)` → script with the marker region replaced (throw if markers absent/duplicated); `extractPatternBlock(scriptText)` → the verbatim text between the markers (throw if absent/duplicated); `parsePatternFromScript(scriptText)` → `{ pattern, loopBeats }` (restricted numeric parse between markers; throw if malformed); `patternToSmf(pattern, loopBeats, opts)` → `Uint8Array` (SMF format 0, one MTrk, `ppq` default 480, `tempoBpm` default 120, `loops` default 1; absolute-tick note on/off, sorted, delta-encoded, end-of-track). CLI: `to-script <in.mid> [-o out.js] [--loop-beats N] [--template path]` (default template = `midi-player.js`), `update <script.js> [--template path] [-o out.js]` (refresh engine from template, keep the script's pattern; default writes in place), `to-midi <script.js> [-o out.mid] [--tempo BPM] [--ppq N] [--loops N]`, and `--help`; clear errors + nonzero exit on bad input; guarded `module.exports` for the core.
+- [x] `midi2scripter.test.js` -- `bun:test` covering: `patternToSmf`→`parseSmf`+`notesToPattern` round-trips a known pattern (pitches, offsets, lengths within 1e-6, loopBeats); `replacePatternBlock(template, renderPatternBlock(P))` then `parsePatternFromScript` returns `P`; `replacePatternBlock` throws when markers are missing; running-status/vel-0 SMF parses; SMPTE division rejected; empty-notes rejected; `renderPatternBlock` output matches the player's formatting (key order, no trailing comma).
 
 **Acceptance Criteria:**
 - Given a valid `.mid`, when `to-script` runs, then a complete player script is produced with the groove in `PATTERN`, and `bun run` on that output exits 0.
 - Given an existing script with a custom pattern, when `update` runs, then the engine (everything outside the markers) matches the template and the script's `PATTERN`/`LOOP_BEATS` is unchanged.
 - Given a script with a parseable pattern, when `to-midi` runs, then a `.mid` is written whose notes, re-read via `parseSmf`/`notesToPattern`, match the script's pattern within 1e-6.
 - Given a SMPTE-division `.mid` or one with no notes, when any command reads it, then the CLI prints a clear error and exits nonzero.
-- Given the sentinel edit to the player, when `bun test scripter/` runs, then the pre-existing player tests still pass.
-- Given `bun test scripter/`, when run, then all converter tests pass.
+- Given the sentinel edit to the player, when `bun test` runs, then the pre-existing player tests still pass.
+- Given `bun test`, when run, then all converter tests pass.
 
 ## Spec Change Log
 
 ### 2026-07-19 — `update` semantics corrected (user feedback)
 - Triggering finding: the captured intent for `update` was reversed. The spec had it swapping in a new pattern from a `.mid` while keeping the engine; the user's actual intent is to **refresh the engine from the template while keeping the script's existing pattern**.
-- Amended: Intent (Approach), Boundaries, I/O matrix `update` row, the `update` task/CLI signature, its acceptance criterion, and Design Notes. Added the `extractPatternBlock` core function; `update` no longer takes a `.mid` (gains `--template`, default `scripter/midi-player.js`).
+- Amended: Intent (Approach), Boundaries, I/O matrix `update` row, the `update` task/CLI signature, its acceptance criterion, and Design Notes. Added the `extractPatternBlock` core function; `update` no longer takes a `.mid` (gains `--template`, default `midi-player.js`).
 - Known-bad avoided: an `update` that clobbers a user's baked groove instead of upgrading the engine beneath it.
 - KEEP: the sentinel-anchored `replacePatternBlock` primitive and the DRY single-engine-file design — both `to-script` and `update` reuse it, just in opposite directions.
+
+### 2026-07-20 — Single-file bundle; moved to project root
+- Change: the converter is now self-contained. `midi-player.js` stays a separate source in the repo (directly unit-tested), and its full text is embedded in `midi2scripter.js` as `PLAYER_TEMPLATE`, which is the default template for `to-script`/`update` (so the one file installs and runs with no sibling). A `build` command re-embeds it from the source; a test asserts the two stay in sync. `--template <file>` still overrides the bundled default.
+- Dropped: no player-emit command — `to-script` already outputs a full player, and any output can just be edited.
+- Structure: everything moved from `scripter/` to the project root; `scripter/` removed. `docs/` unchanged.
+- KEEP: the sentinel-anchored splice primitive and the DRY single-engine-source design.
 
 ## Review Triage Log
 
@@ -122,11 +128,11 @@ var LOOP_BEATS = 4;
 ## Verification
 
 **Commands:**
-- `bun test scripter/` -- expected: all tests pass (pre-existing player tests + new converter round-trip/edge tests).
+- `bun test` -- expected: all tests pass (pre-existing player tests + new converter round-trip/edge tests).
 - CLI round-trip smoke (uses the shipped player as a pattern source):
-  `bun run scripter/midi2scripter.js to-midi scripter/midi-player.js -o /tmp/m2s-rt.mid && bun run scripter/midi2scripter.js to-script /tmp/m2s-rt.mid -o /tmp/m2s-rt.js && bun run /tmp/m2s-rt.js; echo "loaded exit=$?"`
+  `bun run midi2scripter.js to-midi midi-player.js -o /tmp/m2s-rt.mid && bun run midi2scripter.js to-script /tmp/m2s-rt.mid -o /tmp/m2s-rt.js && bun run /tmp/m2s-rt.js; echo "loaded exit=$?"`
   -- expected: each step exits 0; the generated `/tmp/m2s-rt.js` loads (exit 0).
-- `bun run scripter/midi2scripter.js --help` -- expected: usage text, exit 0.
+- `bun run midi2scripter.js --help` -- expected: usage text, exit 0.
 
 **Manual checks:**
 - `update` a copy of the player from a real Logic-exported Drummer `.mid`, then load the result in MainStage → the baked groove plays; everything outside the pattern block (params, engine) is unchanged.
@@ -135,19 +141,19 @@ var LOOP_BEATS = 4;
 
 Status: done
 
-**Summary:** Implemented `scripter/midi2scripter.js`, a dependency-free bun CLI that converts a Standard MIDI File into a complete, ready-to-load copy of the player script (`to-script`), rewrites the pattern block inside an existing script in place while preserving every other byte (`update`), and converts a script's pattern back to a MIDI file (`to-midi`). Machine-readable sentinels were added to the player so the block is reliably locatable; the hand-rolled SMF reader/writer round-trips losslessly.
+**Summary:** Implemented `midi2scripter.js`, a dependency-free bun CLI that converts a Standard MIDI File into a complete, ready-to-load copy of the player script (`to-script`), rewrites the pattern block inside an existing script in place while preserving every other byte (`update`), and converts a script's pattern back to a MIDI file (`to-midi`). Machine-readable sentinels were added to the player so the block is reliably locatable; the hand-rolled SMF reader/writer round-trips losslessly.
 
 **Files changed:**
-- `scripter/midi2scripter.js` — NEW. Pure core (`parseSmf`, `notesToPattern`, `renderPatternBlock`, `replacePatternBlock`, `parsePatternFromScript`, `patternToSmf`) + CLI (`to-script`/`update`/`to-midi`/`--help`); Node-guarded exports, CLI runs only under `require.main === module`.
-- `scripter/midi2scripter.test.js` — NEW. 22 `bun:test` cases: SMF round-trip, template replace→reparse, byte-preservation, marker errors, running-status/vel-0, tempo/time-sig meta, SMPTE/empty rejection, formatting, default-bar loopBeats, offset normalization, plus review-driven cases (malformed-reparse throws, value-range validation, ppq/tempo header overflow, FIFO pairing, zero-length note-off).
-- `scripter/midi-player.js` — MODIFIED. Two sentinel comments only; engine and exports untouched (its 10 tests still pass).
+- `midi2scripter.js` — NEW. Pure core (`parseSmf`, `notesToPattern`, `renderPatternBlock`, `replacePatternBlock`, `parsePatternFromScript`, `patternToSmf`) + CLI (`to-script`/`update`/`to-midi`/`--help`); Node-guarded exports, CLI runs only under `require.main === module`.
+- `midi2scripter.test.js` — NEW. 22 `bun:test` cases: SMF round-trip, template replace→reparse, byte-preservation, marker errors, running-status/vel-0, tempo/time-sig meta, SMPTE/empty rejection, formatting, default-bar loopBeats, offset normalization, plus review-driven cases (malformed-reparse throws, value-range validation, ppq/tempo header overflow, FIFO pairing, zero-length note-off).
+- `midi-player.js` — MODIFIED. Two sentinel comments only; engine and exports untouched (its 10 tests still pass).
 
 **Review findings breakdown:** 6 patches applied (1 medium: silent note-drop on hand-edited reparse; 5 low: MIDI value/header validation, zero-length note-off ordering, FIFO note pairing); 0 deferred; 3 rejected (in-region CRLF normalization, case-sensitive output-name suffix, spec-sanctioned loopBeats recomputation).
 
-**Verification:** `bun test scripter/` → 32/32 pass (10 player + 22 converter), 123 assertions. CLI round-trip smoke (`to-midi` → `to-script` → `bun run` the generated script) → each step exit 0. `update` byte-preservation confirmed (head/tail identical outside markers). `--help` exit 0.
+**Verification:** `bun test` → 32/32 pass (10 player + 22 converter), 123 assertions. CLI round-trip smoke (`to-midi` → `to-script` → `bun run` the generated script) → each step exit 0. `update` byte-preservation confirmed (head/tail identical outside markers). `--help` exit 0.
 
 **Follow-up review recommended:** true — six fixes on a hand-rolled binary MIDI reader/writer, including a data-integrity finding; the domain is corruption-prone enough that an independent pass adds value despite each fix being localized and test-locked.
 
 **Residual risks:** `to-midi`→`to-script` does not preserve `LOOP_BEATS` (default recomputes from bar length; use `--loop-beats`); output-name suffix stripping is case-sensitive; SMF support is intentionally a subset (format 0/1, PPQ division, single tempo, no quantization).
 
-**Correction (2026-07-19, post-run, per user feedback):** The `update` command's direction was reversed. It now **refreshes the player engine** in an existing script from the template (`--template`, default `scripter/midi-player.js`) while **keeping the script's own `PATTERN`/`LOOP_BEATS`** — it no longer takes a `.mid`. Added the `extractPatternBlock` core function; updated the CLI/help, spec sections, and tests (23 converter cases; 33 total). Re-verified end-to-end: engine refreshed from the template, pattern byte-identical, generated script loads (exit 0). Note-pairing was also switched to FIFO during review.
+**Correction (2026-07-19, post-run, per user feedback):** The `update` command's direction was reversed. It now **refreshes the player engine** in an existing script from the template (`--template`, default `midi-player.js`) while **keeping the script's own `PATTERN`/`LOOP_BEATS`** — it no longer takes a `.mid`. Added the `extractPatternBlock` core function; updated the CLI/help, spec sections, and tests (23 converter cases; 33 total). Re-verified end-to-end: engine refreshed from the template, pattern byte-identical, generated script loads (exit 0). Note-pairing was also switched to FIFO during review.

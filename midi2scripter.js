@@ -1,14 +1,17 @@
 // midi2scripter.js
-// MIDI <-> Player-Script Converter (dependency-free bun CLI).
+// MIDI <-> Player-Script Converter (dependency-free, single-file bun CLI).
 //
-// Three build-time operations, all reducible to a single primitive:
-// rewrite the region between `// MIDI-PLAYER:PATTERN-START` and `// MIDI-PLAYER:PATTERN-END`
-// in the player script.
+// Self-contained: the player is embedded as PLAYER_TEMPLATE (generated from
+// midi-player.js), so this one file installs and runs with no sibling file.
 //
-//   to-script <in.mid>   : bake a SMF groove into a fresh copy of the player.
-//   update <script.js> : refresh the player engine in an existing script from
-//                        the template, keeping the script's own PATTERN.
-//   to-midi <script.js>  : turn a script's PATTERN back into a .mid file.
+// Operations, all reducible to one primitive — rewrite the region between
+// `// MIDI-PLAYER:PATTERN-START` and `// MIDI-PLAYER:PATTERN-END` in a script:
+//
+//   to-script <in.mid>  : bake a SMF groove into a fresh copy of the player.
+//   update <script.js>  : refresh a script's player engine from the bundled
+//                         player, keeping the script's own PATTERN.
+//   to-midi <script.js> : turn a script's PATTERN back into a .mid file.
+//   build               : re-embed midi-player.js into PLAYER_TEMPLATE.
 //
 // The core functions (parseSmf, notesToPattern, renderPatternBlock,
 // replacePatternBlock, parsePatternFromScript, patternToSmf) are pure and
@@ -21,6 +24,190 @@
 
 var MARKER_START = "// MIDI-PLAYER:PATTERN-START";
 var MARKER_END = "// MIDI-PLAYER:PATTERN-END";
+
+// ===========================================================================
+// Bundled player
+// ===========================================================================
+//
+// PLAYER_TEMPLATE is the full midi-player.js source, embedded so this file is a
+// single, self-contained install (no sibling file needed at runtime). It is
+// GENERATED from midi-player.js by `bun run midi2scripter.js build`, and a test
+// asserts the two stay in sync. Do not hand-edit the literal below — edit
+// midi-player.js and rebuild.
+//
+// >>> PLAYER_TEMPLATE-START
+var PLAYER_TEMPLATE = `// midi-player.js
+// Logic/MainStage Scripter (MIDI FX) — Host-Synced MIDI Player.
+//
+// Reads the host transport/tempo and plays a looping multi-lane MIDI drum
+// pattern locked to the host beat grid. Emits MIDI only (no audio). Every
+// note is scheduled in BEATS via sendAtBeat so host tempo changes track
+// automatically, and every NoteOn is paired with a NoteOff so nothing hangs.
+//
+// On/off is controlled by the host: Play (and, on the metronome strip, the
+// metronome toggle) gates playback. Map the plugin's bypass to a MainStage
+// button for manual enable/disable.
+
+var NeedsTimingInfo = true;
+
+// ===========================================================================
+// ============================  EDIT THIS  ==================================
+// ===========================================================================
+// Replace PATTERN and LOOP_BEATS to change the groove. Each event is:
+//   { offset, pitch, velocity, length }   -- all timing values are in BEATS.
+//     offset   : beat position within the loop (0 == start of loop)
+//     pitch    : MIDI note number (drum map: 36 kick, 38 snare, 42 closed hat)
+//     velocity : 1..127
+//     length   : note duration in beats (offBeat = onBeat + length)
+// LOOP_BEATS is the loop length in beats (one 4/4 bar == 4).
+//
+// To drop in a baked Drummer/MuseScore groove, paste its note array here in
+// the same {offset, pitch, velocity, length} shape and set LOOP_BEATS.
+//
+// Default: a one-bar 4/4 backbeat.
+//   kick  (36) on beats 0 and 2
+//   snare (38) on beats 1 and 3 (the "2 & 4" backbeat)
+//   hat   (42) on every eighth note (0, 0.5, 1, ... 3.5)
+// ===========================================================================
+// MIDI-PLAYER:PATTERN-START
+var PATTERN = [
+  // Closed hi-hat on the eighths.
+  { offset: 0.0, pitch: 42, velocity: 80, length: 0.1 },
+  { offset: 0.5, pitch: 42, velocity: 64, length: 0.1 },
+  { offset: 1.0, pitch: 42, velocity: 80, length: 0.1 },
+  { offset: 1.5, pitch: 42, velocity: 64, length: 0.1 },
+  { offset: 2.0, pitch: 42, velocity: 80, length: 0.1 },
+  { offset: 2.5, pitch: 42, velocity: 64, length: 0.1 },
+  { offset: 3.0, pitch: 42, velocity: 80, length: 0.1 },
+  { offset: 3.5, pitch: 42, velocity: 64, length: 0.1 },
+  // Kick on 1 and 3.
+  { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },
+  { offset: 2.0, pitch: 36, velocity: 110, length: 0.1 },
+  // Snare backbeat on 2 and 4.
+  { offset: 1.0, pitch: 38, velocity: 100, length: 0.1 },
+  { offset: 3.0, pitch: 38, velocity: 100, length: 0.1 }
+];
+
+var LOOP_BEATS = 4;
+// MIDI-PLAYER:PATTERN-END
+
+// ===========================================================================
+// =========================  END EDIT THIS  =================================
+// ===========================================================================
+
+// Pure helper — no Scripter globals, no side effects. This is the one place
+// the beat math lives (loop wrap + block edges), so it is unit-testable under
+// bun/Node while ProcessMIDI stays a thin adapter.
+//
+// Returns every pattern event whose ABSOLUTE on-beat falls in the half-open
+// range [blockStartBeat, blockEndBeat). The absolute beat of a pattern event
+// with \`offset\` in loop iteration k is \`k * loopBeats + offset\`.
+//
+// Result: array of { pitch, velocity, onBeat, offBeat } with offBeat ==
+// onBeat + length, ordered by ascending absolute onBeat (monotonic across the
+// loop boundary).
+function eventsInBlock(pattern, loopBeats, blockStartBeat, blockEndBeat) {
+  var out = [];
+  // Guard: a non-positive loop length has no well-defined iteration.
+  if (!(loopBeats > 0)) {
+    return out;
+  }
+  // Empty or inverted range yields nothing.
+  if (!(blockEndBeat > blockStartBeat)) {
+    return out;
+  }
+
+  // Determine the range of loop iterations k whose events can land in the
+  // block. The earliest offset is >= 0 and the latest offset is < loopBeats,
+  // so it is safe to scan from the loop containing blockStartBeat up to and
+  // including the loop containing blockEndBeat.
+  var firstLoop = Math.floor(blockStartBeat / loopBeats);
+  var lastLoop = Math.floor(blockEndBeat / loopBeats);
+
+  for (var k = firstLoop; k <= lastLoop; k++) {
+    var base = k * loopBeats;
+    for (var i = 0; i < pattern.length; i++) {
+      var ev = pattern[i];
+      // Normalize offset into [0, loopBeats) so an out-of-range offset — e.g.
+      // pasting a 2-bar groove but leaving LOOP_BEATS at 4 — can never silently
+      // drop a note. For a well-formed offset in [0, loopBeats) this is identity.
+      var offset = ((ev.offset % loopBeats) + loopBeats) % loopBeats;
+      var onBeat = base + offset;
+      if (onBeat >= blockStartBeat && onBeat < blockEndBeat) {
+        out.push({
+          pitch: ev.pitch,
+          velocity: ev.velocity,
+          onBeat: onBeat,
+          offBeat: onBeat + ev.length
+        });
+      }
+    }
+  }
+
+  // Sort by absolute onBeat so results are monotonic even when a single loop
+  // iteration lists lanes out of time order (as the default PATTERN does).
+  out.sort(function (a, b) {
+    return a.onBeat - b.onBeat;
+  });
+
+  return out;
+}
+
+// Per-block callback: schedule the pattern events overlapping this block.
+function ProcessMIDI() {
+  var info = GetTimingInfo();
+  if (!info.playing) {
+    return;
+  }
+
+  var evs = eventsInBlock(PATTERN, LOOP_BEATS, info.blockStartBeat, info.blockEndBeat);
+  for (var i = 0; i < evs.length; i++) {
+    var e = evs[i];
+
+    var on = new NoteOn();
+    on.pitch = e.pitch;
+    on.velocity = e.velocity;
+    on.sendAtBeat(e.onBeat);
+
+    var off = new NoteOff();
+    off.pitch = e.pitch;
+    off.sendAtBeat(e.offBeat);
+  }
+}
+
+// Per-incoming-event callback. With "Block Incoming Notes" on (default),
+// swallow incoming Notes (e.g. metronome clicks) while letting CC / pitch
+// bend / everything else pass through untouched.
+function HandleMIDI(event) {
+  if (GetParameter("Block Incoming Notes") && event instanceof Note) {
+    return;
+  }
+  event.send();
+}
+
+// Called on stop/reset — panic: All Notes Off (CC 123) on all 16 channels so
+// no note hangs when the transport stops mid-pattern.
+function Reset() {
+  for (var ch = 1; ch <= 16; ch++) {
+    var cc = new ControlChange();
+    cc.number = 123;
+    cc.value = 0;
+    cc.channel = ch;
+    cc.send();
+  }
+}
+
+var PluginParameters = [
+  { name: "Block Incoming Notes", type: "checkbox", defaultValue: 1 }
+];
+
+// Node-guarded export so bun/Node tests can require the pure helper. Scripter
+// has no \`module\`, so this branch never runs inside Logic/MainStage.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { eventsInBlock: eventsInBlock };
+}
+`;
+// <<< PLAYER_TEMPLATE-END
 
 // ===========================================================================
 // Numeric formatting helpers
@@ -612,25 +799,47 @@ function patternToSmf(pattern, loopBeats, opts) {
 // CLI wrapper (file I/O + argv). Not run when the module is required.
 // ===========================================================================
 
+// Maintenance: regenerate the embedded PLAYER_TEMPLATE from midi-player.js so
+// the single-file bundle matches the separate source. A test guards the sync.
+function buildBundle() {
+  var fs = require("fs");
+  var path = require("path");
+  var selfPath = path.join(__dirname, "midi2scripter.js");
+  var playerText = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
+  var esc = playerText.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+  var literal = "var PLAYER_TEMPLATE = `" + esc + "`;";
+  var lines = fs.readFileSync(selfPath, "utf8").split("\n");
+  var s = lines.indexOf("// >>> PLAYER_TEMPLATE-START");
+  var e = lines.indexOf("// <<< PLAYER_TEMPLATE-END");
+  if (s < 0 || e < 0 || e < s) {
+    throw new Error("build: PLAYER_TEMPLATE markers not found in " + selfPath);
+  }
+  var out = lines.slice(0, s + 1).concat([literal], lines.slice(e)).join("\n");
+  fs.writeFileSync(selfPath, out);
+  process.stderr.write("rebuilt PLAYER_TEMPLATE from midi-player.js\n");
+}
+
 function printHelp() {
   var text =
-    "midi2scripter -- MIDI <-> player script converter (bun)\n" +
+    "midi2scripter -- MIDI <-> player-script converter (bun, single-file)\n" +
     "\n" +
     "Usage:\n" +
     "  bun run midi2scripter.js to-script <in.mid> [-o out.js] [--loop-beats N] [--template path]\n" +
-    "  bun run midi2scripter.js update <script.js> [--template player.js] [-o out.js]\n" +
+    "  bun run midi2scripter.js update <script.js> [--template path] [-o out.js]\n" +
     "  bun run midi2scripter.js to-midi <script.js> [-o out.mid] [--tempo BPM] [--ppq N] [--loops N]\n" +
+    "  bun run midi2scripter.js build\n" +
     "  bun run midi2scripter.js --help\n" +
     "\n" +
     "Commands:\n" +
-    "  to-script  Bake a MIDI groove into a fresh copy of the player script.\n" +
-    "             Default template: scripter/midi-player.js. Writes to\n" +
-    "             stdout unless -o is given.\n" +
-    "  update     Refresh the player engine in an existing script from the\n" +
-    "             template (default scripter/midi-player.js), keeping the\n" +
-    "             script's own PATTERN/LOOP_BEATS unchanged. In place unless -o.\n" +
+    "  to-script  Bake a MIDI groove into a fresh player script (uses the bundled\n" +
+    "             player unless --template is given). Writes stdout unless -o.\n" +
+    "  update     Refresh a script's player engine from the bundled player (or\n" +
+    "             --template), keeping the script's own PATTERN/LOOP_BEATS.\n" +
+    "             In place unless -o.\n" +
     "  to-midi    Convert a script's PATTERN back to a Standard MIDI File.\n" +
-    "             Defaults: --tempo 120 --ppq 480 --loops 1.\n";
+    "             Defaults: --tempo 120 --ppq 480 --loops 1.\n" +
+    "  build      Maintainers only: re-embed midi-player.js into PLAYER_TEMPLATE\n" +
+    "             (keeps the single-file bundle in sync with the source).\n";
   process.stdout.write(text);
 }
 
@@ -691,7 +900,6 @@ function main() {
       if (!inMid) {
         fail("to-script: missing input .mid path");
       }
-      var templatePath = a.flags.template || path.join(__dirname, "midi-player.js");
       var parsed = readMid(inMid);
       var opts = {};
       if (a.flags.loopBeats != null && !isNaN(a.flags.loopBeats)) {
@@ -699,7 +907,7 @@ function main() {
       }
       var res = notesToPattern(parsed, opts);
       var block = renderPatternBlock(res.pattern, res.loopBeats);
-      var template = fs.readFileSync(templatePath, "utf8");
+      var template = a.flags.template ? fs.readFileSync(a.flags.template, "utf8") : PLAYER_TEMPLATE;
       var script = replacePatternBlock(template, block);
       if (a.flags.o) {
         fs.writeFileSync(a.flags.o, script);
@@ -713,14 +921,13 @@ function main() {
       if (!scriptPath) {
         fail("update: usage: update <script.js> [--template player.js] [-o out.js]");
       }
-      var templatePathU = au.flags.template || path.join(__dirname, "midi-player.js");
       var scriptText = fs.readFileSync(scriptPath, "utf8");
       // Validate the existing pattern (clear error if malformed), then carry its
       // block verbatim onto the fresh engine template — keep the pattern, update
       // the player.
       parsePatternFromScript(scriptText);
       var existingBlock = extractPatternBlock(scriptText);
-      var templateU = fs.readFileSync(templatePathU, "utf8");
+      var templateU = au.flags.template ? fs.readFileSync(au.flags.template, "utf8") : PLAYER_TEMPLATE;
       var updated = replacePatternBlock(templateU, existingBlock);
       var outU = au.flags.o || scriptPath;
       fs.writeFileSync(outU, updated);
@@ -747,6 +954,8 @@ function main() {
       var outM = am.flags.o || scriptPathM.replace(/\.js$/, "") + ".mid";
       fs.writeFileSync(outM, Buffer.from(bytes));
       process.stderr.write("wrote " + outM + "\n");
+    } else if (cmd === "build") {
+      buildBundle();
     } else {
       process.stderr.write("error: unknown command '" + cmd + "'\n\n");
       printHelp();
@@ -769,7 +978,8 @@ if (typeof module !== "undefined" && module.exports) {
     replacePatternBlock: replacePatternBlock,
     extractPatternBlock: extractPatternBlock,
     parsePatternFromScript: parsePatternFromScript,
-    patternToSmf: patternToSmf
+    patternToSmf: patternToSmf,
+    PLAYER_TEMPLATE: PLAYER_TEMPLATE
   };
 }
 
