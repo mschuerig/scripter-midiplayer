@@ -3,7 +3,7 @@
 // MIDI <-> Player-Script Converter (dependency-free, single-file bun CLI).
 //
 // Self-contained: the player is embedded as PLAYER_TEMPLATE (generated from
-// midi-player.js), so this one file installs and runs with no sibling file.
+// src/midi-player.js), so this one file installs and runs with no sibling file.
 //
 // Operations, all reducible to one primitive — rewrite the region between
 // `// MIDI-PLAYER:PATTERN-START` and `// MIDI-PLAYER:PATTERN-END` in a script:
@@ -12,7 +12,8 @@
 //   update <script.js>  : refresh a script's player engine from the bundled
 //                         player, keeping the script's own PATTERN.
 //   to-midi <script.js> : turn a script's PATTERN back into a .mid file.
-//   build               : re-embed midi-player.js into PLAYER_TEMPLATE.
+//   build               : regenerate PLAYER_TEMPLATE + example-player.js from
+//                         src/midi-player.js.
 //
 // The core functions (parseSmf, notesToPattern, renderPatternBlock,
 // replacePatternBlock, parsePatternFromScript, patternToSmf) are pure and
@@ -30,11 +31,11 @@ var MARKER_END = "// MIDI-PLAYER:PATTERN-END";
 // Bundled player
 // ===========================================================================
 //
-// PLAYER_TEMPLATE is the full midi-player.js source, embedded so this file is a
-// single, self-contained install (no sibling file needed at runtime). It is
-// GENERATED from midi-player.js by `bun run midi2scripter.js build`, and a test
-// asserts the two stay in sync. Do not hand-edit the literal below — edit
-// midi-player.js and rebuild.
+// PLAYER_TEMPLATE is the full src/midi-player.js source, embedded so this file
+// is a single, self-contained install (no sibling file needed at runtime). It
+// is GENERATED from src/midi-player.js by `bun run midi2scripter.js build`, and
+// a test asserts the two stay in sync. Do not hand-edit the literal below —
+// edit src/midi-player.js and rebuild.
 //
 // >>> PLAYER_TEMPLATE-START
 var PLAYER_TEMPLATE = `// midi-player.js
@@ -800,13 +801,16 @@ function patternToSmf(pattern, loopBeats, opts) {
 // CLI wrapper (file I/O + argv). Not run when the module is required.
 // ===========================================================================
 
-// Maintenance: regenerate the embedded PLAYER_TEMPLATE from midi-player.js so
-// the single-file bundle matches the separate source. A test guards the sync.
+// Maintenance: regenerate build artifacts from the engine source
+// (src/midi-player.js) so everything derived from it stays in sync:
+//   - the embedded PLAYER_TEMPLATE literal in this file (the single-file bundle)
+//   - example-player.js, the paste-ready example shipped for users
+// Tests guard both.
 function buildBundle() {
   var fs = require("fs");
   var path = require("path");
   var selfPath = path.join(__dirname, "midi2scripter.js");
-  var playerText = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
+  var playerText = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
   var esc = playerText.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
   var literal = "var PLAYER_TEMPLATE = `" + esc + "`;";
   var lines = fs.readFileSync(selfPath, "utf8").split("\n");
@@ -817,7 +821,8 @@ function buildBundle() {
   }
   var out = lines.slice(0, s + 1).concat([literal], lines.slice(e)).join("\n");
   fs.writeFileSync(selfPath, out);
-  process.stderr.write("rebuilt PLAYER_TEMPLATE from midi-player.js\n");
+  fs.writeFileSync(path.join(__dirname, "example-player.js"), playerText);
+  process.stderr.write("rebuilt PLAYER_TEMPLATE and example-player.js from src/midi-player.js\n");
 }
 
 function printHelp() {
@@ -839,8 +844,8 @@ function printHelp() {
     "             In place unless -o.\n" +
     "  to-midi    Convert a script's PATTERN back to a Standard MIDI File.\n" +
     "             Defaults: --tempo 120 --ppq 480 --loops 1.\n" +
-    "  build      Maintainers only: re-embed midi-player.js into PLAYER_TEMPLATE\n" +
-    "             (keeps the single-file bundle in sync with the source).\n";
+    "  build      Maintainers only: regenerate PLAYER_TEMPLATE + example-player.js\n" +
+    "             from src/midi-player.js (keeps derived artifacts in sync).\n";
   process.stdout.write(text);
 }
 

@@ -19,42 +19,44 @@ zu üben oder zu spielen wird ermüdend und sagt nichts über das Feeling der Mu
 aus. Dies spielt stattdessen einen echten Groove – einen, der deinem Tempo folgt,
 sofort auf Tempoänderungen reagiert und deine eigenen Schlagzeugklänge ansteuert.
 
-Es gibt zwei Teile:
-
-- **Der Player** ([`midi-player.js`](midi-player.js)) – das Scripter-Script, das
-  du in MainStage einfügst. Es spielt den geloopten Groove.
-- **midi2scripter** ([`midi2scripter.js`](midi2scripter.js)) – ein einzelnes,
-  eigenständiges Kommandozeilen-Werkzeug, das eine MIDI-Datei in einen fertigen
-  Player einbäckt (und einen Player wieder zurück in MIDI umwandeln kann).
+Es gibt ein einziges Werkzeug, **midi2scripter**
+([`midi2scripter.js`](midi2scripter.js)) – ein eigenständiges
+Kommandozeilen-Werkzeug. Es bäckt eine MIDI-Datei (zum Beispiel aus Logics
+Drummer) in ein fertiges Player-Script ein und kann einen Player wieder zurück
+in MIDI umwandeln. Ein fertiger Beispiel-Player
+([`example-player.js`](example-player.js)) liegt bei, sodass du gleich einen
+ausprobieren kannst, ohne vorher etwas einzubacken.
 
 ## bun installieren
 
 Das Kommandozeilen-Werkzeug läuft auf [bun](https://bun.sh), einer schnellen
-JavaScript-Laufzeit. Einmalig im **Terminal** installieren:
+JavaScript-Umgebung. Einmalig im **Terminal** installieren:
 
 ```sh
-curl -fsSL https://bun.sh/install | bash
+brew install oven-sh/bun/bun
 ```
 
-Terminal schließen und neu öffnen, dann prüfen:
+(Kein [Homebrew](https://brew.sh)? `curl -fsSL https://bun.sh/install | bash`
+geht auch – danach Terminal schließen und neu öffnen.)
+
+Dann prüfen:
 
 ```sh
 bun --version
 ```
 
-(Mit Homebrew geht auch `brew install oven-sh/bun/bun`.) bun brauchst du nur, um
-einen Groove *vorzubereiten* – sobald ein Player in MainStage ist, führt MainStage
-ihn aus, und bun ist nicht mehr beteiligt.
+bun brauchst du nur, um einen Groove *vorzubereiten* – sobald ein Player in
+MainStage ist, führt MainStage ihn aus, und bun ist nicht mehr beteiligt.
 
 ## Einen Player vorbereiten
 
 Wechsle im Terminal mit `cd` in diesen Ordner und kopiere einen fertigen Player
 direkt in die Zwischenablage.
 
-Der eingebaute Groove:
+Der beiliegende Beispiel-Groove:
 
 ```sh
-pbcopy < midi-player.js
+pbcopy < example-player.js
 ```
 
 Oder deinen eigenen Groove aus einer MIDI-Datei einbacken:
@@ -69,10 +71,10 @@ bun run midi2scripter.js to-script mein-groove.mid | pbcopy
 `mein-groove.mid` aus Logics **Drummer** erzeugen:
 
 1. Eine Drummer-Spur anlegen und einen Groove einstellen.
-2. Control-Klick auf die Drummer-Region → **Umwandeln** → **In MIDI-Region
-   umwandeln**.
-3. Region auswählen → **Ablage → Exportieren → Auswahl als MIDI-Datei…** (oder
-   die Region in den Finder ziehen).
+2. Drummer-Region auswählen → **Ablage → Exportieren → Auswahl als MIDI-Datei…**
+   (oder die Region in den Finder ziehen). Eine Drummer-Region lässt sich direkt
+   als MIDI exportieren – du musst sie vorher nicht in eine MIDI-Region
+   umwandeln.
 
 ## In MainStage laden
 

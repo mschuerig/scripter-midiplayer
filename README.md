@@ -20,13 +20,12 @@ bare click gets tiring, and it tells you nothing about the feel of the music.
 This plays a real groove in its place — one that follows your tempo, reacts
 instantly to tempo changes, and drives your own drum sounds.
 
-There are two parts:
-
-- **The player** ([`midi-player.js`](midi-player.js)) — the Scripter script you
-  paste into MainStage. It plays the looping groove.
-- **midi2scripter** ([`midi2scripter.js`](midi2scripter.js)) — a single,
-  self-contained command-line helper that bakes a MIDI file into a
-  ready-to-paste player (and can convert one back to MIDI).
+There's a single tool, **midi2scripter** ([`midi2scripter.js`](midi2scripter.js))
+— a self-contained command-line helper. It bakes a MIDI file (for example from
+Logic's Drummer) into a ready-to-paste player script, and can convert a player
+back to MIDI. A ready-made example player
+([`example-player.js`](example-player.js)) is included, so you can try one out
+without baking anything first.
 
 ## Install bun
 
@@ -34,28 +33,30 @@ The command-line helper runs on [bun](https://bun.sh), a fast JavaScript
 runtime. Install it once, in **Terminal**:
 
 ```sh
-curl -fsSL https://bun.sh/install | bash
+brew install oven-sh/bun/bun
 ```
 
-Quit and reopen Terminal, then check it worked:
+(No [Homebrew](https://brew.sh)? `curl -fsSL https://bun.sh/install | bash` works
+too — then quit and reopen Terminal.)
+
+Check it worked:
 
 ```sh
 bun --version
 ```
 
-(With Homebrew, `brew install oven-sh/bun/bun` works too.) You only need bun to
-*prepare* a groove — once a player is in MainStage, MainStage runs it and bun is
-not involved.
+You only need bun to *prepare* a groove — once a player is in MainStage,
+MainStage runs it and bun is not involved.
 
 ## Prepare a player
 
 In Terminal, `cd` into this folder, then copy a finished player straight to the
 clipboard.
 
-The built-in groove:
+The included example groove:
 
 ```sh
-pbcopy < midi-player.js
+pbcopy < example-player.js
 ```
 
 Or bake your own groove from a MIDI file:
@@ -70,9 +71,9 @@ usually quicker.)
 To make `my-groove.mid` from Logic's **Drummer**:
 
 1. Create a Drummer track and dial in a groove.
-2. Control-click the Drummer region → **Convert** → **Convert to MIDI Region**.
-3. Select the region → **File → Export → Selection as MIDI File…** (or drag it
-   to the Finder).
+2. Select the Drummer region → **File → Export → Selection as MIDI File…** (or
+   drag it to the Finder). A Drummer region exports straight to MIDI — no need to
+   convert it to a MIDI region first.
 
 ## Load it into MainStage
 

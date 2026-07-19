@@ -68,7 +68,7 @@ test("patternToSmf -> parseSmf -> notesToPattern round-trips a known pattern", f
 // ---------------------------------------------------------------------------
 
 test("replacePatternBlock(template, render(P)) then parsePatternFromScript returns P", function () {
-  var templateText = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
+  var templateText = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
 
   var P = [
     { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },
@@ -86,7 +86,7 @@ test("replacePatternBlock(template, render(P)) then parsePatternFromScript retur
 });
 
 test("replacePatternBlock preserves every byte outside the marker region", function () {
-  var templateText = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
+  var templateText = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
   var P = [{ offset: 0.0, pitch: 40, velocity: 90, length: 0.2 }];
   var script = C.replacePatternBlock(templateText, C.renderPatternBlock(P, 2));
 
@@ -373,7 +373,13 @@ test("zero-length note round-trips with note-off strictly after note-on", functi
 // Single-file bundle stays in sync with the separate player source
 // ---------------------------------------------------------------------------
 
-test("PLAYER_TEMPLATE matches midi-player.js (run `bun run midi2scripter.js build` if this fails)", function () {
-  var player = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
+test("PLAYER_TEMPLATE matches src/midi-player.js (run `bun run midi2scripter.js build` if this fails)", function () {
+  var player = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
   expect(C.PLAYER_TEMPLATE).toBe(player);
+});
+
+test("example-player.js matches src/midi-player.js (run `bun run midi2scripter.js build` if this fails)", function () {
+  var player = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
+  var example = fs.readFileSync(path.join(__dirname, "example-player.js"), "utf8");
+  expect(example).toBe(player);
 });
