@@ -18,3 +18,6 @@
 !/_bmad/*/config.yaml
 !/_bmad/custom/config.toml
 !/_bmad/custom/config.user.toml
+
+# BMad skills live here but are not part of the repo (recreate via the BMad installer)
+/.claude/
