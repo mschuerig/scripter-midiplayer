@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 
-const { eventsInBlock } = require("./midi-groove-player.js");
+const { eventsInBlock } = require("./midi-player.js");
 
 // Small, explicit test pattern so expectations are exact.
 // Two lanes, loop length 4 beats.

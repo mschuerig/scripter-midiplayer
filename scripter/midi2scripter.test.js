@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 
 const fs = require("fs");
 const path = require("path");
-const C = require("./mgp-convert.js");
+const C = require("./midi2scripter.js");
 
 // ---------------------------------------------------------------------------
 // Small inline SMF builders (no external .mid fixtures).
@@ -68,7 +68,7 @@ test("patternToSmf -> parseSmf -> notesToPattern round-trips a known pattern", f
 // ---------------------------------------------------------------------------
 
 test("replacePatternBlock(template, render(P)) then parsePatternFromScript returns P", function () {
-  var templateText = fs.readFileSync(path.join(__dirname, "midi-groove-player.js"), "utf8");
+  var templateText = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
 
   var P = [
     { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },
@@ -86,16 +86,16 @@ test("replacePatternBlock(template, render(P)) then parsePatternFromScript retur
 });
 
 test("replacePatternBlock preserves every byte outside the marker region", function () {
-  var templateText = fs.readFileSync(path.join(__dirname, "midi-groove-player.js"), "utf8");
+  var templateText = fs.readFileSync(path.join(__dirname, "midi-player.js"), "utf8");
   var P = [{ offset: 0.0, pitch: 40, velocity: 90, length: 0.2 }];
   var script = C.replacePatternBlock(templateText, C.renderPatternBlock(P, 2));
 
   var origLines = templateText.split("\n");
-  var startIdx = origLines.indexOf("// MGP:PATTERN-START");
-  var endIdx = origLines.indexOf("// MGP:PATTERN-END");
+  var startIdx = origLines.indexOf("// MIDI-PLAYER:PATTERN-START");
+  var endIdx = origLines.indexOf("// MIDI-PLAYER:PATTERN-END");
   var newLines = script.split("\n");
-  var startIdx2 = newLines.indexOf("// MGP:PATTERN-START");
-  var endIdx2 = newLines.indexOf("// MGP:PATTERN-END");
+  var startIdx2 = newLines.indexOf("// MIDI-PLAYER:PATTERN-START");
+  var endIdx2 = newLines.indexOf("// MIDI-PLAYER:PATTERN-END");
 
   // Everything up to & including START marker is identical.
   expect(newLines.slice(0, startIdx2 + 1)).toEqual(origLines.slice(0, startIdx + 1));
@@ -106,15 +106,15 @@ test("replacePatternBlock preserves every byte outside the marker region", funct
 test("update: engine comes from the template, pattern is kept from the existing script", function () {
   var template =
     "// v2 engine top\n" +
-    "// MGP:PATTERN-START\n" +
+    "// MIDI-PLAYER:PATTERN-START\n" +
     "var PATTERN = [];\n\nvar LOOP_BEATS = 1;\n" +
-    "// MGP:PATTERN-END\n" +
+    "// MIDI-PLAYER:PATTERN-END\n" +
     "// v2 engine bottom\n";
   var oldScript =
     "// v1 engine top\n" +
-    "// MGP:PATTERN-START\n" +
+    "// MIDI-PLAYER:PATTERN-START\n" +
     "var PATTERN = [\n  { offset: 0.0, pitch: 40, velocity: 90, length: 0.2 }\n];\n\nvar LOOP_BEATS = 2;\n" +
-    "// MGP:PATTERN-END\n" +
+    "// MIDI-PLAYER:PATTERN-END\n" +
     "// v1 engine bottom\n";
 
   // update = carry the existing script's pattern block onto the fresh template.
@@ -142,7 +142,7 @@ test("replacePatternBlock throws when markers are missing", function () {
 
 test("replacePatternBlock throws when a marker is duplicated", function () {
   var dup =
-    "// MGP:PATTERN-START\nold\n// MGP:PATTERN-END\n// MGP:PATTERN-START\nx\n// MGP:PATTERN-END\n";
+    "// MIDI-PLAYER:PATTERN-START\nold\n// MIDI-PLAYER:PATTERN-END\n// MIDI-PLAYER:PATTERN-START\nx\n// MIDI-PLAYER:PATTERN-END\n";
   expect(function () {
     C.replacePatternBlock(dup, "block");
   }).toThrow();
@@ -282,7 +282,7 @@ test("notesToPattern normalizes offsets into [0, loopBeats)", function () {
 // ---------------------------------------------------------------------------
 
 function scriptWith(body) {
-  return "// MGP:PATTERN-START\n" + body + "\nvar LOOP_BEATS = 4;\n// MGP:PATTERN-END\n";
+  return "// MIDI-PLAYER:PATTERN-START\n" + body + "\nvar LOOP_BEATS = 4;\n// MIDI-PLAYER:PATTERN-END\n";
 }
 
 test("parsePatternFromScript throws on a reordered-key event (no silent drop)", function () {

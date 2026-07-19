@@ -1,5 +1,5 @@
-// midi-groove-player.js
-// Logic/MainStage Scripter (MIDI FX) — Host-Synced MIDI Groove Player.
+// midi-player.js
+// Logic/MainStage Scripter (MIDI FX) — Host-Synced MIDI Player.
 //
 // Reads the host transport/tempo and plays a looping multi-lane MIDI drum
 // pattern locked to the host beat grid. Emits MIDI only (no audio). Every
@@ -31,7 +31,7 @@ var NeedsTimingInfo = true;
 //   snare (38) on beats 1 and 3 (the "2 & 4" backbeat)
 //   hat   (42) on every eighth note (0, 0.5, 1, ... 3.5)
 // ===========================================================================
-// MGP:PATTERN-START
+// MIDI-PLAYER:PATTERN-START
 var PATTERN = [
   // Closed hi-hat on the eighths.
   { offset: 0.0, pitch: 42, velocity: 80, length: 0.1 },
@@ -51,7 +51,7 @@ var PATTERN = [
 ];
 
 var LOOP_BEATS = 4;
-// MGP:PATTERN-END
+// MIDI-PLAYER:PATTERN-END
 
 // ===========================================================================
 // =========================  END EDIT THIS  =================================

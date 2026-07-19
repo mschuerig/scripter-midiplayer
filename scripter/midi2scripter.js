@@ -1,8 +1,8 @@
-// mgp-convert.js
-// MIDI <-> Groove-Player Script Converter (dependency-free bun CLI).
+// midi2scripter.js
+// MIDI <-> Player-Script Converter (dependency-free bun CLI).
 //
 // Three build-time operations, all reducible to a single primitive:
-// rewrite the region between `// MGP:PATTERN-START` and `// MGP:PATTERN-END`
+// rewrite the region between `// MIDI-PLAYER:PATTERN-START` and `// MIDI-PLAYER:PATTERN-END`
 // in the player script.
 //
 //   to-script <in.mid>   : bake a SMF groove into a fresh copy of the player.
@@ -19,8 +19,8 @@
 // Markers
 // ===========================================================================
 
-var MARKER_START = "// MGP:PATTERN-START";
-var MARKER_END = "// MGP:PATTERN-END";
+var MARKER_START = "// MIDI-PLAYER:PATTERN-START";
+var MARKER_END = "// MIDI-PLAYER:PATTERN-END";
 
 // ===========================================================================
 // Numeric formatting helpers
@@ -614,20 +614,20 @@ function patternToSmf(pattern, loopBeats, opts) {
 
 function printHelp() {
   var text =
-    "mgp-convert -- MIDI <-> Groove-Player script converter (bun)\n" +
+    "midi2scripter -- MIDI <-> player script converter (bun)\n" +
     "\n" +
     "Usage:\n" +
-    "  bun run mgp-convert.js to-script <in.mid> [-o out.js] [--loop-beats N] [--template path]\n" +
-    "  bun run mgp-convert.js update <script.js> [--template player.js] [-o out.js]\n" +
-    "  bun run mgp-convert.js to-midi <script.js> [-o out.mid] [--tempo BPM] [--ppq N] [--loops N]\n" +
-    "  bun run mgp-convert.js --help\n" +
+    "  bun run midi2scripter.js to-script <in.mid> [-o out.js] [--loop-beats N] [--template path]\n" +
+    "  bun run midi2scripter.js update <script.js> [--template player.js] [-o out.js]\n" +
+    "  bun run midi2scripter.js to-midi <script.js> [-o out.mid] [--tempo BPM] [--ppq N] [--loops N]\n" +
+    "  bun run midi2scripter.js --help\n" +
     "\n" +
     "Commands:\n" +
     "  to-script  Bake a MIDI groove into a fresh copy of the player script.\n" +
-    "             Default template: scripter/midi-groove-player.js. Writes to\n" +
+    "             Default template: scripter/midi-player.js. Writes to\n" +
     "             stdout unless -o is given.\n" +
     "  update     Refresh the player engine in an existing script from the\n" +
-    "             template (default scripter/midi-groove-player.js), keeping the\n" +
+    "             template (default scripter/midi-player.js), keeping the\n" +
     "             script's own PATTERN/LOOP_BEATS unchanged. In place unless -o.\n" +
     "  to-midi    Convert a script's PATTERN back to a Standard MIDI File.\n" +
     "             Defaults: --tempo 120 --ppq 480 --loops 1.\n";
@@ -691,7 +691,7 @@ function main() {
       if (!inMid) {
         fail("to-script: missing input .mid path");
       }
-      var templatePath = a.flags.template || path.join(__dirname, "midi-groove-player.js");
+      var templatePath = a.flags.template || path.join(__dirname, "midi-player.js");
       var parsed = readMid(inMid);
       var opts = {};
       if (a.flags.loopBeats != null && !isNaN(a.flags.loopBeats)) {
@@ -713,7 +713,7 @@ function main() {
       if (!scriptPath) {
         fail("update: usage: update <script.js> [--template player.js] [-o out.js]");
       }
-      var templatePathU = au.flags.template || path.join(__dirname, "midi-groove-player.js");
+      var templatePathU = au.flags.template || path.join(__dirname, "midi-player.js");
       var scriptText = fs.readFileSync(scriptPath, "utf8");
       // Validate the existing pattern (clear error if malformed), then carry its
       // block verbatim onto the fresh engine template — keep the pattern, update
