@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 // midi2scripter.js
 // MIDI <-> Player-Script Converter (dependency-free, single-file bun CLI).
 //
