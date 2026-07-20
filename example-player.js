@@ -20,7 +20,7 @@ var NeedsTimingInfo = true;
 // Toolchain version. Single source of truth: midi2scripter.js reads this out of
 // the embedded engine, so the converter, the bundled player, and every baked
 // script all report the same version. Bump on any engine or converter change.
-var VERSION = "1.0.0";
+var VERSION = "1.0.1";
 
 // Flip to true to print switch diagnostics to the Scripter console via Trace()
 // — the raw incoming CC stream (number + value) and every switch decision.
@@ -45,7 +45,8 @@ var TRACE = false;
 // Switch parts live with CCs (see the plugin parameters; all coexist, a CC of 0
 // disables that control; switches land on the next bar's beat 1):
 //   "Enable CC"         : value >= 64 enables output, < 64 mutes it (immediate;
-//                         re-enabling resumes in phase with the bar grid).
+//                         re-enabling resumes in phase with the bar grid). At 0
+//                         the control is off and playback is always on.
 //   "Select Part CC"    : value n selects part n (1-based).
 //   "Previous/Next Part CC" : cycle to the prev/next part (wraps).
 //   "Part N (name) CC"  : a dedicated CC per part selects it directly.
@@ -237,6 +238,13 @@ function ProcessMIDI() {
   // A hand-edited empty PARTS has nothing to schedule; bail before indexing.
   if (!PARTS.length) {
     return;
+  }
+
+  // The Enable-CC mute only applies while that control is assigned. With it
+  // disabled (Enable CC == 0) playback is always on, and any stale mute left
+  // over from a previous assignment is cleared.
+  if (!(GetParameter("Enable CC") > 0)) {
+    enabled = true;
   }
 
   var barBeats = barBeatsOf(info);
