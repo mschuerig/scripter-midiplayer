@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 
-const { eventsInBlock, nextBarBoundary, planBlock, partCcParamName } = require("./midi-player.js");
+const { eventsInBlock, nextBarBoundary, planBlock, partCcParamName, cyclePart } = require("./midi-player.js");
 
 // Small, explicit test pattern so expectations are exact.
 // Two lanes, loop length 4 beats. Compact 4-tuples [offset, pitch, velocity, length].
@@ -221,8 +221,20 @@ test("planBlock restart (pending part == active) yields a fresh origin at the bo
 });
 
 test("partCcParamName is the exact PluginParameters label used to read a part's CC", function () {
-  // The builder and the Per-Part matcher must derive the same string, or the
+  // The builder and the per-part matcher must derive the same string, or the
   // matcher's GetParameter(...) would silently miss and switching would break.
-  expect(partCcParamName(0, "backbeat")).toBe("Part 1 CC (backbeat)");
-  expect(partCcParamName(2, "chorus")).toBe("Part 3 CC (chorus)");
+  expect(partCcParamName(0, "backbeat")).toBe("Part 1 (backbeat) CC");
+  expect(partCcParamName(2, "chorus")).toBe("Part 3 (chorus) CC");
+});
+
+test("cyclePart wraps forward and backward over the parts", function () {
+  // 3 parts: next past the last wraps to the first; prev before the first wraps.
+  expect(cyclePart(0, 1, 3)).toBe(1);
+  expect(cyclePart(2, 1, 3)).toBe(0);
+  expect(cyclePart(0, -1, 3)).toBe(2);
+  expect(cyclePart(1, -1, 3)).toBe(0);
+  // A single part cycles to itself; a zero count is guarded to 0.
+  expect(cyclePart(0, 1, 1)).toBe(0);
+  expect(cyclePart(0, -1, 1)).toBe(0);
+  expect(cyclePart(0, 1, 0)).toBe(0);
 });

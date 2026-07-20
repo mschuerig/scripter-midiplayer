@@ -6,9 +6,10 @@
 // note is scheduled in BEATS via sendAtBeat so host tempo changes track
 // automatically, and every NoteOn is paired with a NoteOff so nothing hangs.
 //
-// Several grooves are bundled as switchable PARTS. A CC selects the active
-// part and a CC restarts the current part; both take effect on the next bar's
-// beat 1, so switches stay musical and locked to the downbeat.
+// Several grooves are bundled as switchable PARTS. CCs select the active part
+// (by value, by prev/next cycling, or a dedicated CC per part) and a CC
+// restarts the current part; every switch takes effect on the next bar's beat
+// 1, so it stays musical and locked to the downbeat.
 //
 // On/off is controlled by the host: Play (and, on the metronome strip, the
 // metronome toggle) gates playback. Map the plugin's bypass to a MainStage
@@ -16,13 +17,19 @@
 
 var NeedsTimingInfo = true;
 
+// Flip to true to print switch diagnostics to the Scripter console via Trace()
+// — the raw incoming CC stream (number + value) and every switch decision.
+// Handy for seeing how a controller's buttons actually send CC (e.g. a toggle
+// button sends value 0 on alternate presses, which is swallowed, not a switch).
+var TRACE = false;
+
 // ===========================================================================
 // ============================  EDIT THIS  ==================================
 // ===========================================================================
 // Replace PARTS to change the grooves. Each part is:
 //   { name, cc, loopBeats, pattern }
-//     name      : label shown in the "Part i CC (name)" parameter
-//     cc         : the CC number that selects this part in Per-Part CC mode
+//     name      : label shown in the "Part N (name) CC" parameter
+//     cc         : default CC number for this part's dedicated select control
 //     loopBeats  : loop length in beats (one 4/4 bar == 4)
 //     pattern    : array of compact 4-tuples [offset, pitch, velocity, length]
 //                    offset   : beat position within the loop (0 == start)
@@ -30,10 +37,13 @@ var NeedsTimingInfo = true;
 //                    velocity : 1..127
 //                    length   : note duration in beats (offBeat = onBeat + length)
 //
-// Switch parts live with a CC (see the plugin parameters):
-//   Single CC mode  : "Select CC" value n selects part n (1-based).
-//   Per-Part CC mode : a part's own `cc` selects it (value > 0).
-//   "Restart CC"    : restarts the current part on the next downbeat.
+// Switch parts live with CCs (see the plugin parameters; all coexist, a CC of 0
+// disables that control; switches land on the next bar's beat 1):
+//   "Select Part CC"    : value n selects part n (1-based).
+//   "Previous/Next Part CC" : cycle to the prev/next part (wraps).
+//   "Part N (name) CC"  : a dedicated CC per part selects it directly.
+//   "Restart CC"        : restarts the current part on the next downbeat.
+// Set TRACE = true (above) to log the incoming CC stream + switch decisions.
 //
 // To drop in a baked Drummer/MuseScore groove, paste its note tuples here in
 // the same [offset, pitch, velocity, length] shape and set loopBeats.
@@ -247,19 +257,41 @@ function ProcessMIDI() {
   STATE = plan.next;
 }
 
-// The exact PluginParameters name for a part's CC control. Shared by the
-// parameter builder and the Per-Part CC matcher so the two strings never drift.
-function partCcParamName(index0, name) {
-  return "Part " + (index0 + 1) + " CC (" + name + ")";
+// Print a diagnostic line to the Scripter console when TRACE is on. Trace() is
+// a Scripter global; guarded so `bun run` (where it is undefined) stays quiet.
+function trace(msg) {
+  if (TRACE && typeof Trace !== "undefined") {
+    Trace(msg);
+  }
 }
 
-// Schedule a pending switch/restart at the next bar boundary. Returns true if
-// the CC matched a configured control (and was consumed), false otherwise.
-// A control CC of 0 means "disabled", so Bank Select (CC 0) is never hijacked.
+// The exact PluginParameters name for a part's CC control. Shared by the
+// parameter builder and the per-part matcher so the two strings never drift.
+function partCcParamName(index0, name) {
+  return "Part " + (index0 + 1) + " (" + name + ") CC";
+}
+
+// Wrap `current` by `delta` steps over `count` parts (Next = +1, Prev = -1),
+// so cycling past the last part lands on the first and vice versa. Pure.
+function cyclePart(current, delta, count) {
+  if (!(count > 0)) {
+    return 0;
+  }
+  return (((current + delta) % count) + count) % count;
+}
+
+// Schedule a pending part switch / restart at the next bar boundary. Every
+// switch control is independent and live whenever its CC number is > 0 (a CC of
+// 0 means "disabled", so Bank Select — CC 0 — is never hijacked). Returns true
+// if the CC matched a configured control (and was consumed), false otherwise.
 function handleControlCC(event) {
   var info = GetTimingInfo();
   var barBeats = barBeatsOf(info);
   var atBeat = nextBarBoundary(info.blockStartBeat, barBeats);
+  // A relative move (prev/next) is measured from a queued pending target if one
+  // is already waiting for the bar line, else the active part — so repeated
+  // presses within a bar accumulate instead of collapsing to a single step.
+  var refPart = STATE.pending ? STATE.pending.part : STATE.activePart;
 
   // Restart the current part on the next downbeat. A matching Restart CC is
   // always consumed — value 0 (e.g. a footswitch's release) is swallowed with
@@ -268,47 +300,74 @@ function handleControlCC(event) {
   if (restartCc > 0 && event.number === restartCc) {
     if (event.value > 0) {
       STATE.pending = { part: STATE.activePart, atBeat: atBeat };
+      trace("Restart CC " + event.number + " v" + event.value + " -> restart part " + STATE.activePart + " @beat " + atBeat);
     }
     return true;
   }
 
-  if (GetParameter("Switch Mode") === 0) {
-    // Single CC: value is the 1-based part number.
-    var selectCc = GetParameter("Select CC");
-    if (selectCc > 0 && event.number === selectCc) {
-      var idx = event.value - 1;
-      if (idx >= 0 && idx < PARTS.length) {
-        STATE.pending = { part: idx, atBeat: atBeat };
-      }
-      // Out-of-range or value 0: swallowed but no switch.
-      return true;
+  // Select by value: the CC value is the 1-based part number.
+  var selectCc = GetParameter("Select Part CC");
+  if (selectCc > 0 && event.number === selectCc) {
+    var idx = event.value - 1;
+    if (idx >= 0 && idx < PARTS.length) {
+      STATE.pending = { part: idx, atBeat: atBeat };
+      trace("Select Part CC " + event.number + " v" + event.value + " -> part " + idx + " @beat " + atBeat);
+    } else {
+      trace("Select Part CC " + event.number + " v" + event.value + " -> out of range, ignored");
     }
-  } else {
-    // Per-Part CC: each part's CC — live-adjustable via its "Part i CC" UI
-    // parameter (default = the baked value) — selects it. A CC of 0 means the
-    // part is unassigned, so it is skipped and Bank Select passes through.
-    for (var i = 0; i < PARTS.length; i++) {
-      var partCc = GetParameter(partCcParamName(i, PARTS[i].name));
-      if (partCc > 0 && partCc === event.number) {
-        if (event.value > 0) {
-          STATE.pending = { part: i, atBeat: atBeat };
-        }
-        // value 0: swallowed but no switch.
-        return true;
+    return true;
+  }
+
+  // Cycle to the previous part (wraps).
+  var prevCc = GetParameter("Previous Part CC");
+  if (prevCc > 0 && event.number === prevCc) {
+    if (event.value > 0 && PARTS.length > 0) {
+      var p = cyclePart(refPart, -1, PARTS.length);
+      STATE.pending = { part: p, atBeat: atBeat };
+      trace("Previous Part CC " + event.number + " v" + event.value + " -> part " + p + " @beat " + atBeat);
+    }
+    return true;
+  }
+
+  // Cycle to the next part (wraps).
+  var nextCc = GetParameter("Next Part CC");
+  if (nextCc > 0 && event.number === nextCc) {
+    if (event.value > 0 && PARTS.length > 0) {
+      var n = cyclePart(refPart, 1, PARTS.length);
+      STATE.pending = { part: n, atBeat: atBeat };
+      trace("Next Part CC " + event.number + " v" + event.value + " -> part " + n + " @beat " + atBeat);
+    }
+    return true;
+  }
+
+  // A dedicated CC per part — live-adjustable via its "Part N (name) CC" UI
+  // parameter (default = the baked value) — selects that part directly. A CC of
+  // 0 means the part is unassigned, so it is skipped and CC 0 passes through.
+  for (var i = 0; i < PARTS.length; i++) {
+    var partCc = GetParameter(partCcParamName(i, PARTS[i].name));
+    if (partCc > 0 && partCc === event.number) {
+      if (event.value > 0) {
+        STATE.pending = { part: i, atBeat: atBeat };
+        trace("Part CC " + event.number + " v" + event.value + " -> part " + i + " @beat " + atBeat);
       }
+      // value 0: swallowed but no switch.
+      return true;
     }
   }
 
   return false;
 }
 
-// Per-incoming-event callback. A CC matching a configured control (Select CC /
-// a part CC / Restart CC) schedules the switch and is swallowed. With "Block
-// Incoming Notes" on (default), incoming Notes (e.g. metronome clicks) are
-// swallowed; everything else passes through untouched.
+// Per-incoming-event callback. A CC matching a configured switch control
+// schedules the switch and is swallowed. With "Block Incoming Notes" on
+// (default), incoming Notes (e.g. metronome clicks) are swallowed; everything
+// else passes through untouched.
 function HandleMIDI(event) {
-  if (event instanceof ControlChange && handleControlCC(event)) {
-    return;
+  if (event instanceof ControlChange) {
+    trace("CC in: number=" + event.number + " value=" + event.value);
+    if (handleControlCC(event)) {
+      return;
+    }
   }
   if (GetParameter("Block Incoming Notes") && event instanceof Note) {
     return;
@@ -331,42 +390,29 @@ function Reset() {
   reanchor = true;
 }
 
-// PluginParameters is assembled at load time: the fixed controls first, then
-// one "Part i CC (name)" per part so per-part CC mode has a labeled control.
+// PluginParameters is assembled at load time. All switch controls are
+// independent and coexist — assign whichever a controller can send. A CC of 0
+// disables that control. Order: Block Incoming Notes, Restart CC, Select Part
+// CC, Previous/Next Part CC, then one "Part N (name) CC" per part.
 var PluginParameters = [];
 (function buildPluginParameters() {
-  PluginParameters.push({ name: "Block Incoming Notes", type: "checkbox", defaultValue: 1 });
-  PluginParameters.push({
-    name: "Switch Mode",
-    type: "menu",
-    valueStrings: ["Single CC (value = part)", "Per-Part CC"],
-    defaultValue: 0
-  });
-  PluginParameters.push({
-    name: "Select CC",
-    type: "lin",
-    minValue: 0,
-    maxValue: 127,
-    numberOfSteps: 127,
-    defaultValue: 20
-  });
-  PluginParameters.push({
-    name: "Restart CC",
-    type: "lin",
-    minValue: 0,
-    maxValue: 127,
-    numberOfSteps: 127,
-    defaultValue: 21
-  });
-  for (var i = 0; i < PARTS.length; i++) {
-    PluginParameters.push({
-      name: partCcParamName(i, PARTS[i].name),
+  function ccParam(name, defaultValue) {
+    return {
+      name: name,
       type: "lin",
       minValue: 0,
       maxValue: 127,
       numberOfSteps: 127,
-      defaultValue: PARTS[i].cc
-    });
+      defaultValue: defaultValue
+    };
+  }
+  PluginParameters.push({ name: "Block Incoming Notes", type: "checkbox", defaultValue: 1 });
+  PluginParameters.push(ccParam("Restart CC", 21));
+  PluginParameters.push(ccParam("Select Part CC", 20));
+  PluginParameters.push(ccParam("Previous Part CC", 22));
+  PluginParameters.push(ccParam("Next Part CC", 23));
+  for (var i = 0; i < PARTS.length; i++) {
+    PluginParameters.push(ccParam(partCcParamName(i, PARTS[i].name), PARTS[i].cc));
   }
 })();
 
@@ -377,6 +423,7 @@ if (typeof module !== "undefined" && module.exports) {
     eventsInBlock: eventsInBlock,
     nextBarBoundary: nextBarBoundary,
     planBlock: planBlock,
-    partCcParamName: partCcParamName
+    partCcParamName: partCcParamName,
+    cyclePart: cyclePart
   };
 }

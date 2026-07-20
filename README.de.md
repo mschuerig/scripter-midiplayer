@@ -106,19 +106,33 @@ bun run midi2scripter.js to-midi mein-player.js --part 3 -o fill.mid     # nach 
 Enthält ein Player mehr als einen Part, spielt immer nur einer. Den aktiven Part
 wählst du per MIDI-CC, und die Umschaltung greift auf **Zählzeit 1 des nächsten
 Takts** – Parts wechseln also stets auf der Eins, nie mitten im Takt. Es gibt
-zwei Wege, die CCs zuzuordnen, gewählt über den Parameter **Switch Mode**:
+mehrere Umschaltregler; sie wirken alle gleichzeitig, ordne also den zu, den
+dein Controller senden kann. Jeder ist ein CC-Nummern-Parameter; auf **0**
+gesetzt ist der jeweilige Regler deaktiviert.
 
-- **Single CC (value = part)** – ein CC (**Select CC**, Standard 20) wählt einen
-  Part über seine Nummer: Wert 1 → Part 1, Wert 2 → Part 2 und so weiter. Ein
-  Wert außerhalb des Bereichs bewirkt nichts.
-- **Per-Part CC** – jeder Part hat seinen eigenen CC (die Parameter **Part 1
-  CC**, **Part 2 CC**, …, benannt nach dem jeweiligen Part). Sendest du diesen CC
-  mit einem Wert größer als 0, wird sein Part gewählt.
+- **Select Part CC** (Standard 20) – wählt einen Part über seinen *Wert*: Wert 1
+  → Part 1, Wert 2 → Part 2 und so weiter. Ein Wert außerhalb des Bereichs
+  bewirkt nichts.
+- **Previous Part CC** / **Next Part CC** (Standard 22 / 23) – springen zum
+  vorherigen / nächsten Part und laufen an den Enden um. Ideal für ein Paar
+  Fußtaster.
+- **Part N (name) CC** – jeder Part hat zusätzlich seinen eigenen CC-Parameter
+  (benannt nach dem Part). Sendest du diesen CC mit einem Wert größer als 0, wird
+  sein Part gewählt.
+- **Restart CC** (Standard 21) – startet den *aktuellen* Part auf der nächsten
+  Eins von vorn, um nach einem Tempo- oder Abschnittswechsel wieder sauber in den
+  Loop einzurasten.
 
-Ein eigener **Restart CC** (Standard 21) startet den *aktuellen* Part auf der
-nächsten Eins von vorn – praktisch, um nach einem Tempo- oder Abschnittswechsel
-wieder sauber in den Loop einzurasten. Alle drei Regler werden vom Player
-geschluckt und nicht an das Instrument weitergegeben.
+Alle diese Regler werden vom Player geschluckt und nicht an das Instrument
+weitergegeben.
+
+**Tasten senden Wert 0?** Ein Wechsel wird bei einem CC-Wert über 0 ausgelöst.
+Manche *Toggle*-Tasten senden bei einem Druck einen hohen Wert und beim nächsten
+**0** – dann schaltet nur jeder zweite Druck um. Setze oben im Skript
+`var TRACE = true;`, um den eingehenden CC-Strom (Nummer + Wert) und jede
+Umschaltentscheidung in die Scripter-Konsole zu schreiben – so siehst du am
+schnellsten, was deine Tasten senden, und kannst sie bei Bedarf auf
+Momentary-/Trigger-Modus stellen.
 
 ## Als Metronom verwenden
 

@@ -103,20 +103,29 @@ To make `my-groove.mid` from Logic's **Drummer**:
 
 When a player holds more than one part, only one plays at a time. You pick the
 active part with a MIDI CC, and the switch takes effect on the **next bar's beat
-1** — so parts always change on the downbeat, never mid-bar. There are two ways
-to map the CCs, chosen with the **Switch Mode** parameter:
+1** — so parts always change on the downbeat, never mid-bar. There are several
+switch controls; they all work at once, so map whichever your controller can
+send. Each is a CC number parameter; set it to **0** to disable that control.
 
-- **Single CC (value = part)** — one CC (**Select CC**, default 20) selects a
-  part by its number: value 1 → part 1, value 2 → part 2, and so on. An
-  out-of-range value does nothing.
-- **Per-Part CC** — each part has its own CC (the **Part 1 CC**, **Part 2 CC**,
-  … parameters, named after each part). Sending that CC with any value above 0
-  selects its part.
+- **Select Part CC** (default 20) — selects a part by its *value*: value 1 →
+  part 1, value 2 → part 2, and so on. An out-of-range value does nothing.
+- **Previous Part CC** / **Next Part CC** (defaults 22 / 23) — step to the
+  previous / next part, wrapping around the ends. Great for a pair of footswitch
+  buttons.
+- **Part N (name) CC** — each part also has its own dedicated CC parameter
+  (named after the part). Sending that CC with any value above 0 selects it.
+- **Restart CC** (default 21) — restarts the *current* part from its beginning
+  on the next downbeat, for snapping back into the loop after a tempo or section
+  change.
 
-A separate **Restart CC** (default 21) restarts the *current* part from its
-beginning on the next downbeat — handy for snapping back into the loop after a
-tempo or section change. All three controls are consumed by the player and are
-not passed through to the instrument.
+All of these are consumed by the player and not passed through to the instrument.
+
+**Buttons sending value 0?** A switch fires on a CC value above 0. Some
+controllers' *toggle* buttons send a high value on one press and **0** on the
+next, so only every other press switches. Set `var TRACE = true;` near the top
+of the script to print the incoming CC stream (number + value) and every switch
+decision to Scripter's console — the quickest way to see what your buttons send
+and set them to momentary/trigger mode if needed.
 
 ## Use it as the metronome
 
