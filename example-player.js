@@ -17,6 +17,11 @@
 
 var NeedsTimingInfo = true;
 
+// Toolchain version. Single source of truth: midi2scripter.js reads this out of
+// the embedded engine, so the converter, the bundled player, and every baked
+// script all report the same version. Bump on any engine or converter change.
+var VERSION = "1.0.0";
+
 // Flip to true to print switch diagnostics to the Scripter console via Trace()
 // — the raw incoming CC stream (number + value) and every switch decision.
 // Handy for seeing how a controller's buttons actually send CC (e.g. a toggle
@@ -39,6 +44,8 @@ var TRACE = false;
 //
 // Switch parts live with CCs (see the plugin parameters; all coexist, a CC of 0
 // disables that control; switches land on the next bar's beat 1):
+//   "Enable CC"         : value >= 64 enables output, < 64 mutes it (immediate;
+//                         re-enabling resumes in phase with the bar grid).
 //   "Select Part CC"    : value n selects part n (1-based).
 //   "Previous/Next Part CC" : cycle to the prev/next part (wraps).
 //   "Part N (name) CC"  : a dedicated CC per part selects it directly.
@@ -205,6 +212,12 @@ function planBlock(state, parts, barBeats, blockStartBeat, blockEndBeat) {
 var STATE = { activePart: 0, partOrigin: 0, pending: null };
 var reanchor = true;
 
+// Output gate (the "Enable CC" mute). The part-switch state machine keeps
+// running while disabled — only note output is silenced — so the loop stays
+// locked to the bar grid and re-enabling resumes exactly in phase (as if it had
+// been playing all along), maintaining measure alignment.
+var enabled = true;
+
 function barBeatsOf(info) {
   var barBeats = (info.meterNumerator * 4) / info.meterDenominator;
   if (!(barBeats > 0)) {
@@ -235,22 +248,27 @@ function ProcessMIDI() {
     reanchor = false;
   }
 
+  // Advance the switch state machine every block, even when muted, so pending
+  // switches still resolve on the bar grid and the loop phase keeps counting —
+  // this is what lets a re-enable resume in measure alignment.
   var plan = planBlock(STATE, PARTS, barBeats, info.blockStartBeat, info.blockEndBeat);
-  for (var s = 0; s < plan.segments.length; s++) {
-    var seg = plan.segments[s];
-    var part = PARTS[seg.part];
-    var evs = eventsInBlock(part.pattern, part.loopBeats, seg.origin, seg.segStart, seg.segEnd);
-    for (var i = 0; i < evs.length; i++) {
-      var e = evs[i];
+  if (enabled) {
+    for (var s = 0; s < plan.segments.length; s++) {
+      var seg = plan.segments[s];
+      var part = PARTS[seg.part];
+      var evs = eventsInBlock(part.pattern, part.loopBeats, seg.origin, seg.segStart, seg.segEnd);
+      for (var i = 0; i < evs.length; i++) {
+        var e = evs[i];
 
-      var on = new NoteOn();
-      on.pitch = e.pitch;
-      on.velocity = e.velocity;
-      on.sendAtBeat(e.onBeat);
+        var on = new NoteOn();
+        on.pitch = e.pitch;
+        on.velocity = e.velocity;
+        on.sendAtBeat(e.onBeat);
 
-      var off = new NoteOff();
-      off.pitch = e.pitch;
-      off.sendAtBeat(e.offBeat);
+        var off = new NoteOff();
+        off.pitch = e.pitch;
+        off.sendAtBeat(e.offBeat);
+      }
     }
   }
 
@@ -285,6 +303,22 @@ function cyclePart(current, delta, count) {
 // 0 means "disabled", so Bank Select — CC 0 — is never hijacked). Returns true
 // if the CC matched a configured control (and was consumed), false otherwise.
 function handleControlCC(event) {
+  // Enable / disable the player's output immediately (the metronome-style mute,
+  // since a metronome channel strip does not pass MIDI into Scripter). A value
+  // >= 64 enables, < 64 disables (the MIDI switch convention; a toggle button's
+  // 127/0 maps straight onto on/off). Disabling cuts ringing notes at once;
+  // enabling resumes in phase with the bar grid (see `enabled`).
+  var enableCc = GetParameter("Enable CC");
+  if (enableCc > 0 && event.number === enableCc) {
+    var nowEnabled = event.value >= 64;
+    if (enabled && !nowEnabled) {
+      allNotesOff();
+    }
+    enabled = nowEnabled;
+    trace("Enable CC " + event.number + " v" + event.value + " -> " + (enabled ? "enabled" : "disabled"));
+    return true;
+  }
+
   var info = GetTimingInfo();
   var barBeats = barBeatsOf(info);
   var atBeat = nextBarBoundary(info.blockStartBeat, barBeats);
@@ -375,10 +409,9 @@ function HandleMIDI(event) {
   event.send();
 }
 
-// Called on stop/reset — panic: All Notes Off (CC 123) on all 16 channels so
-// no note hangs when the transport stops mid-pattern. Clears any pending
-// switch and re-anchors the loop origin on the next play.
-function Reset() {
+// Panic: All Notes Off (CC 123) on all 16 channels so nothing hangs. Shared by
+// Reset (transport stop) and the immediate Enable-CC mute.
+function allNotesOff() {
   for (var ch = 1; ch <= 16; ch++) {
     var cc = new ControlChange();
     cc.number = 123;
@@ -386,14 +419,21 @@ function Reset() {
     cc.channel = ch;
     cc.send();
   }
+}
+
+// Called on stop/reset: panic All Notes Off so nothing hangs when the transport
+// stops mid-pattern, clear any pending switch, and re-anchor the loop origin on
+// the next play. Leaves the Enable-CC mute state untouched.
+function Reset() {
+  allNotesOff();
   STATE.pending = null;
   reanchor = true;
 }
 
 // PluginParameters is assembled at load time. All switch controls are
 // independent and coexist — assign whichever a controller can send. A CC of 0
-// disables that control. Order: Block Incoming Notes, Restart CC, Select Part
-// CC, Previous/Next Part CC, then one "Part N (name) CC" per part.
+// disables that control. Order: Block Incoming Notes, Enable CC, Restart CC,
+// Select Part CC, Previous/Next Part CC, then one "Part N (name) CC" per part.
 var PluginParameters = [];
 (function buildPluginParameters() {
   function ccParam(name, defaultValue) {
@@ -407,6 +447,7 @@ var PluginParameters = [];
     };
   }
   PluginParameters.push({ name: "Block Incoming Notes", type: "checkbox", defaultValue: 1 });
+  PluginParameters.push(ccParam("Enable CC", 24));
   PluginParameters.push(ccParam("Restart CC", 21));
   PluginParameters.push(ccParam("Select Part CC", 20));
   PluginParameters.push(ccParam("Previous Part CC", 22));

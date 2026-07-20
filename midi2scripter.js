@@ -59,6 +59,11 @@ var PLAYER_TEMPLATE = `// midi-player.js
 
 var NeedsTimingInfo = true;
 
+// Toolchain version. Single source of truth: midi2scripter.js reads this out of
+// the embedded engine, so the converter, the bundled player, and every baked
+// script all report the same version. Bump on any engine or converter change.
+var VERSION = "1.0.0";
+
 // Flip to true to print switch diagnostics to the Scripter console via Trace()
 // — the raw incoming CC stream (number + value) and every switch decision.
 // Handy for seeing how a controller's buttons actually send CC (e.g. a toggle
@@ -81,6 +86,8 @@ var TRACE = false;
 //
 // Switch parts live with CCs (see the plugin parameters; all coexist, a CC of 0
 // disables that control; switches land on the next bar's beat 1):
+//   "Enable CC"         : value >= 64 enables output, < 64 mutes it (immediate;
+//                         re-enabling resumes in phase with the bar grid).
 //   "Select Part CC"    : value n selects part n (1-based).
 //   "Previous/Next Part CC" : cycle to the prev/next part (wraps).
 //   "Part N (name) CC"  : a dedicated CC per part selects it directly.
@@ -247,6 +254,12 @@ function planBlock(state, parts, barBeats, blockStartBeat, blockEndBeat) {
 var STATE = { activePart: 0, partOrigin: 0, pending: null };
 var reanchor = true;
 
+// Output gate (the "Enable CC" mute). The part-switch state machine keeps
+// running while disabled — only note output is silenced — so the loop stays
+// locked to the bar grid and re-enabling resumes exactly in phase (as if it had
+// been playing all along), maintaining measure alignment.
+var enabled = true;
+
 function barBeatsOf(info) {
   var barBeats = (info.meterNumerator * 4) / info.meterDenominator;
   if (!(barBeats > 0)) {
@@ -277,22 +290,27 @@ function ProcessMIDI() {
     reanchor = false;
   }
 
+  // Advance the switch state machine every block, even when muted, so pending
+  // switches still resolve on the bar grid and the loop phase keeps counting —
+  // this is what lets a re-enable resume in measure alignment.
   var plan = planBlock(STATE, PARTS, barBeats, info.blockStartBeat, info.blockEndBeat);
-  for (var s = 0; s < plan.segments.length; s++) {
-    var seg = plan.segments[s];
-    var part = PARTS[seg.part];
-    var evs = eventsInBlock(part.pattern, part.loopBeats, seg.origin, seg.segStart, seg.segEnd);
-    for (var i = 0; i < evs.length; i++) {
-      var e = evs[i];
+  if (enabled) {
+    for (var s = 0; s < plan.segments.length; s++) {
+      var seg = plan.segments[s];
+      var part = PARTS[seg.part];
+      var evs = eventsInBlock(part.pattern, part.loopBeats, seg.origin, seg.segStart, seg.segEnd);
+      for (var i = 0; i < evs.length; i++) {
+        var e = evs[i];
 
-      var on = new NoteOn();
-      on.pitch = e.pitch;
-      on.velocity = e.velocity;
-      on.sendAtBeat(e.onBeat);
+        var on = new NoteOn();
+        on.pitch = e.pitch;
+        on.velocity = e.velocity;
+        on.sendAtBeat(e.onBeat);
 
-      var off = new NoteOff();
-      off.pitch = e.pitch;
-      off.sendAtBeat(e.offBeat);
+        var off = new NoteOff();
+        off.pitch = e.pitch;
+        off.sendAtBeat(e.offBeat);
+      }
     }
   }
 
@@ -327,6 +345,22 @@ function cyclePart(current, delta, count) {
 // 0 means "disabled", so Bank Select — CC 0 — is never hijacked). Returns true
 // if the CC matched a configured control (and was consumed), false otherwise.
 function handleControlCC(event) {
+  // Enable / disable the player's output immediately (the metronome-style mute,
+  // since a metronome channel strip does not pass MIDI into Scripter). A value
+  // >= 64 enables, < 64 disables (the MIDI switch convention; a toggle button's
+  // 127/0 maps straight onto on/off). Disabling cuts ringing notes at once;
+  // enabling resumes in phase with the bar grid (see \`enabled\`).
+  var enableCc = GetParameter("Enable CC");
+  if (enableCc > 0 && event.number === enableCc) {
+    var nowEnabled = event.value >= 64;
+    if (enabled && !nowEnabled) {
+      allNotesOff();
+    }
+    enabled = nowEnabled;
+    trace("Enable CC " + event.number + " v" + event.value + " -> " + (enabled ? "enabled" : "disabled"));
+    return true;
+  }
+
   var info = GetTimingInfo();
   var barBeats = barBeatsOf(info);
   var atBeat = nextBarBoundary(info.blockStartBeat, barBeats);
@@ -417,10 +451,9 @@ function HandleMIDI(event) {
   event.send();
 }
 
-// Called on stop/reset — panic: All Notes Off (CC 123) on all 16 channels so
-// no note hangs when the transport stops mid-pattern. Clears any pending
-// switch and re-anchors the loop origin on the next play.
-function Reset() {
+// Panic: All Notes Off (CC 123) on all 16 channels so nothing hangs. Shared by
+// Reset (transport stop) and the immediate Enable-CC mute.
+function allNotesOff() {
   for (var ch = 1; ch <= 16; ch++) {
     var cc = new ControlChange();
     cc.number = 123;
@@ -428,14 +461,21 @@ function Reset() {
     cc.channel = ch;
     cc.send();
   }
+}
+
+// Called on stop/reset: panic All Notes Off so nothing hangs when the transport
+// stops mid-pattern, clear any pending switch, and re-anchor the loop origin on
+// the next play. Leaves the Enable-CC mute state untouched.
+function Reset() {
+  allNotesOff();
   STATE.pending = null;
   reanchor = true;
 }
 
 // PluginParameters is assembled at load time. All switch controls are
 // independent and coexist — assign whichever a controller can send. A CC of 0
-// disables that control. Order: Block Incoming Notes, Restart CC, Select Part
-// CC, Previous/Next Part CC, then one "Part N (name) CC" per part.
+// disables that control. Order: Block Incoming Notes, Enable CC, Restart CC,
+// Select Part CC, Previous/Next Part CC, then one "Part N (name) CC" per part.
 var PluginParameters = [];
 (function buildPluginParameters() {
   function ccParam(name, defaultValue) {
@@ -449,6 +489,7 @@ var PluginParameters = [];
     };
   }
   PluginParameters.push({ name: "Block Incoming Notes", type: "checkbox", defaultValue: 1 });
+  PluginParameters.push(ccParam("Enable CC", 24));
   PluginParameters.push(ccParam("Restart CC", 21));
   PluginParameters.push(ccParam("Select Part CC", 20));
   PluginParameters.push(ccParam("Previous Part CC", 22));
@@ -471,6 +512,14 @@ if (typeof module !== "undefined" && module.exports) {
 }
 `;
 // <<< PLAYER_TEMPLATE-END
+
+// Toolchain version — read out of the embedded engine so the converter, the
+// bundled player, and every baked script always report the same number. The
+// single source of truth is `var VERSION` in src/midi-player.js.
+var VERSION = (function () {
+  var m = /var VERSION = "([^"]+)"/.exec(PLAYER_TEMPLATE);
+  return m ? m[1] : "unknown";
+})();
 
 // ===========================================================================
 // Numeric formatting helpers
@@ -1138,6 +1187,14 @@ function selectPart(parts, spec) {
   throw new Error("to-midi: no part named '" + spec + "'");
 }
 
+// Output filename for a part in `to-midi`. `base` is the -o value (or the script
+// path) with its .mid/.js extension already stripped. A single-part export
+// writes `<base>.mid`; a multi-part export namespaces each part as
+// `<base>.<partName>.mid` so the files don't collide.
+function midiOutName(base, partName, multi) {
+  return multi ? base + "." + partName + ".mid" : base + ".mid";
+}
+
 // ===========================================================================
 // PATTERN -> SMF writer
 // ===========================================================================
@@ -1310,14 +1367,14 @@ function buildBundle() {
 
 function printHelp() {
   var text =
-    "midi2scripter -- MIDI <-> player-script converter (bun, single-file)\n" +
+    "midi2scripter " + VERSION + " -- MIDI <-> player-script converter (bun, single-file)\n" +
     "\n" +
     "Usage:\n" +
     "  bun run midi2scripter.js to-script <in.mid> [more.mid ...] [-o out.js] [--loop-beats N] [--template path]\n" +
     "  bun run midi2scripter.js update <script.js> [--template path] [-o out.js]\n" +
     "  bun run midi2scripter.js to-midi <script.js> [--part <name|index>] [-o out.mid] [--tempo BPM] [--ppq N] [--loops N]\n" +
     "  bun run midi2scripter.js build\n" +
-    "  bun run midi2scripter.js --help\n" +
+    "  bun run midi2scripter.js --version | --help\n" +
     "\n" +
     "Commands:\n" +
     "  to-script  Bake one or more MIDI grooves into a fresh player script — one\n" +
@@ -1326,9 +1383,10 @@ function printHelp() {
     "             stdout unless -o. --loop-beats overrides every part's loop.\n" +
     "  update     Refresh a script's player engine from the bundled player (or\n" +
     "             --template), keeping the script's own PARTS. In place unless -o.\n" +
-    "  to-midi    Convert one of a script's PARTS back to a Standard MIDI File.\n" +
-    "             --part selects the part by name or 1-based index (default 1).\n" +
-    "             Defaults: --tempo 120 --ppq 480 --loops 1.\n" +
+    "  to-midi    Convert a script's PARTS back to Standard MIDI Files. Without\n" +
+    "             --part, exports EVERY part, one .mid each, named\n" +
+    "             <base>.<part>.mid; --part <name|1-based index> exports just one\n" +
+    "             to <base>.mid. Defaults: --tempo 120 --ppq 480 --loops 1.\n" +
     "  build      Maintainers only: regenerate PLAYER_TEMPLATE + example-player.js\n" +
     "             from src/midi-player.js (keeps derived artifacts in sync).\n";
   process.stdout.write(text);
@@ -1368,6 +1426,10 @@ function main() {
 
   if (cmd === "--help" || cmd === "-h") {
     printHelp();
+    return;
+  }
+  if (cmd === "--version" || cmd === "-v") {
+    process.stdout.write("midi2scripter " + VERSION + "\n");
     return;
   }
   if (!cmd) {
@@ -1464,7 +1526,6 @@ function main() {
       }
       var scriptTextM = fs.readFileSync(scriptPathM, "utf8");
       var partsM = parsePartsFromScript(scriptTextM).parts;
-      var chosen = selectPart(partsM, am.flags.part);
       var optsM = {};
       if (am.flags.tempo != null && !isNaN(am.flags.tempo)) {
         optsM.tempoBpm = am.flags.tempo;
@@ -1475,14 +1536,22 @@ function main() {
       if (am.flags.loops != null && !isNaN(am.flags.loops)) {
         optsM.loops = am.flags.loops;
       }
-      // patternToSmf reads {offset,pitch,velocity,length}; adapt the tuples.
-      var patObjs = chosen.pattern.map(function (ev) {
-        return { offset: ev[0], pitch: ev[1], velocity: ev[2], length: ev[3] };
-      });
-      var bytes = patternToSmf(patObjs, chosen.loopBeats, optsM);
-      var outM = am.flags.o || scriptPathM.replace(/\.js$/, "") + ".mid";
-      fs.writeFileSync(outM, Buffer.from(bytes));
-      process.stderr.write("wrote " + outM + "\n");
+      // --part selects one part; without it, export EVERY part (one .mid each).
+      var selectedM = am.flags.part != null ? [selectPart(partsM, am.flags.part)] : partsM;
+      var multiM = selectedM.length > 1;
+      // Output base: -o (or the script path) with its extension stripped.
+      var baseM = (am.flags.o || scriptPathM).replace(/\.(mid|js)$/i, "");
+      for (var pm = 0; pm < selectedM.length; pm++) {
+        var chosen = selectedM[pm];
+        // patternToSmf reads {offset,pitch,velocity,length}; adapt the tuples.
+        var patObjs = chosen.pattern.map(function (ev) {
+          return { offset: ev[0], pitch: ev[1], velocity: ev[2], length: ev[3] };
+        });
+        var bytes = patternToSmf(patObjs, chosen.loopBeats, optsM);
+        var outM = midiOutName(baseM, chosen.name, multiM);
+        fs.writeFileSync(outM, Buffer.from(bytes));
+        process.stderr.write("wrote " + outM + "\n");
+      }
     } else if (cmd === "build") {
       buildBundle();
     } else {
@@ -1511,7 +1580,9 @@ if (typeof module !== "undefined" && module.exports) {
     parsePartsFromScript: parsePartsFromScript,
     sanitizePartName: sanitizePartName,
     selectPart: selectPart,
+    midiOutName: midiOutName,
     patternToSmf: patternToSmf,
+    VERSION: VERSION,
     PLAYER_TEMPLATE: PLAYER_TEMPLATE
   };
 }

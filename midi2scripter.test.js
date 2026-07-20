@@ -685,3 +685,21 @@ test("update migrates a legacy OBJECT-form PARTS block onto the tuple engine", f
     [1.0, 38, 100, 0.2]
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// Versioning + to-midi output naming
+// ---------------------------------------------------------------------------
+
+test("VERSION is read from the embedded engine and matches src/midi-player.js", function () {
+  var player = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
+  var m = /var VERSION = "([^"]+)"/.exec(player);
+  expect(m).not.toBeNull();
+  expect(C.VERSION).toBe(m[1]);
+});
+
+test("midiOutName namespaces multi-part exports and keeps single exports bare", function () {
+  // Single part -> <base>.mid ; multiple parts -> <base>.<part>.mid
+  expect(C.midiOutName("song", "verse", false)).toBe("song.mid");
+  expect(C.midiOutName("song", "verse", true)).toBe("song.verse.mid");
+  expect(C.midiOutName("out", "intro", true)).toBe("out.intro.mid");
+});

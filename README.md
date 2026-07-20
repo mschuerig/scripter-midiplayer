@@ -79,10 +79,15 @@ You then switch between the parts live with a CC (see *Switching parts live*
 below). Baking a player back to a MIDI file works the other way round:
 
 ```sh
-bun run midi2scripter.js to-midi my-player.js -o groove.mid          # first part
-bun run midi2scripter.js to-midi my-player.js --part chorus -o c.mid # by name
-bun run midi2scripter.js to-midi my-player.js --part 3 -o fill.mid   # by number
+bun run midi2scripter.js to-midi my-player.js                    # ALL parts -> my-player.<part>.mid
+bun run midi2scripter.js to-midi my-player.js --part chorus -o c.mid  # one part, by name
+bun run midi2scripter.js to-midi my-player.js --part 3 -o fill.mid    # one part, by number
 ```
+
+With no `--part`, `to-midi` writes **every** part, one `.mid` each, named
+`<base>.<part>.mid`. Add `--part` (a name or 1-based number) to export just one.
+`bun run midi2scripter.js --version` prints the tool version; every baked player
+records the same version it was generated with.
 
 To make `my-groove.mid` from Logic's **Drummer**:
 
@@ -118,6 +123,12 @@ send. Each is a CC number parameter; set it to **0** to disable that control.
   on the next downbeat, for snapping back into the loop after a tempo or section
   change.
 
+- **Enable CC** (default 24) — starts / stops the groove immediately. A value
+  **≥ 64** enables output, **< 64** mutes it (so a latching button's 127/0 maps
+  straight onto on/off). Disabling silences ringing notes at once; enabling
+  resumes **in phase** with the bar grid, as if the groove had been playing all
+  along — so the loop stays measure-aligned across a mute.
+
 All of these are consumed by the player and not passed through to the instrument.
 
 **Buttons sending value 0?** A switch fires on a CC value above 0. Some
@@ -127,21 +138,22 @@ of the script to print the incoming CC stream (number + value) and every switch
 decision to Scripter's console — the quickest way to see what your buttons send
 and set them to momentary/trigger mode if needed.
 
-## Use it as the metronome
+## Start and stop it like a metronome
 
-For a groove that starts and stops with MainStage's metronome button, put the
-player on the **metronome** channel strip and give it a real kit:
+The obvious idea — putting the player on MainStage's **metronome** channel strip
+so its button gates the groove — does **not** work: metronome strips don't pass
+MIDI into Scripter. Use the **Enable CC** instead:
 
-1. On the metronome strip, click the instrument slot showing **Klopfgeist** (the
-   click) and choose **Drum Kit Designer** instead. Drum Kit Designer follows the
-   General MIDI drum layout, so the player's kick, snare, and hi-hat land on the
-   right sounds.
-2. Insert **Scripter** in that strip's MIDI FX slot and paste your player.
-3. Turn **Block Incoming Notes** on (see below).
+1. Put the player on a normal instrument strip with a real kit (e.g. **Drum Kit
+   Designer**, which follows the General MIDI drum layout so kick, snare, and
+   hi-hat land right).
+2. In Layout mode, add a button and map it to the **Enable CC** number (default
+   24). Make it a **latching** (toggle) button so it sends 127 / 0.
 
-Now the metronome button switches your groove on and off, and you hear a kit
-instead of a click. (Prefer to keep it simple? Just leave the player on your drum
-instrument's own strip — then it plays whenever MainStage is playing.)
+Now that button starts and stops the groove on demand, immediately, while the
+loop stays locked to the bar — your hands-free metronome, with a real kit
+instead of a click. (Prefer it always-on? Just leave **Enable CC** at 0 to
+disable the control, and the groove plays whenever MainStage is playing.)
 
 ## "Block Incoming Notes"
 
@@ -150,11 +162,7 @@ Incoming Notes**, on by default.
 
 When it's on, MIDI notes arriving *into* the player are swallowed, so you hear
 only the groove the player generates. (Other messages — sustain, CC, pitch bend
-— still pass through.)
-
-This is what makes the metronome-strip setup clean: MainStage's metronome keeps
-sending its own click notes to the instrument, and blocking them lets the
-metronome button gate your groove *without* the click sounding underneath.
+— still pass through, including the switch CCs the player consumes.)
 
 Turn it off if you want incoming notes to reach the instrument after all — for
 example when you also play that same kit from a pad or keyboard through the same

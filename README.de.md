@@ -80,10 +80,15 @@ umschalten* weiter unten). Umgekehrt einen Player zurück in eine MIDI-Datei
 umwandeln:
 
 ```sh
-bun run midi2scripter.js to-midi mein-player.js -o groove.mid            # erster Part
-bun run midi2scripter.js to-midi mein-player.js --part refrain -o r.mid  # nach Name
-bun run midi2scripter.js to-midi mein-player.js --part 3 -o fill.mid     # nach Nummer
+bun run midi2scripter.js to-midi mein-player.js                     # ALLE Parts -> mein-player.<part>.mid
+bun run midi2scripter.js to-midi mein-player.js --part refrain -o r.mid  # ein Part, nach Name
+bun run midi2scripter.js to-midi mein-player.js --part 3 -o fill.mid     # ein Part, nach Nummer
 ```
+
+Ohne `--part` schreibt `to-midi` **jeden** Part, je eine `.mid`, benannt
+`<basis>.<part>.mid`. Mit `--part` (Name oder 1-basierte Nummer) exportierst du
+nur einen. `bun run midi2scripter.js --version` zeigt die Tool-Version; jeder
+gebackene Player trägt dieselbe Version, mit der er erzeugt wurde.
 
 `mein-groove.mid` aus Logics **Drummer** erzeugen:
 
@@ -123,6 +128,13 @@ gesetzt ist der jeweilige Regler deaktiviert.
   Eins von vorn, um nach einem Tempo- oder Abschnittswechsel wieder sauber in den
   Loop einzurasten.
 
+- **Enable CC** (Standard 24) – startet / stoppt den Groove sofort. Ein Wert
+  **≥ 64** aktiviert die Ausgabe, **< 64** schaltet sie stumm (die 127/0 einer
+  Rasttaste bilden also direkt Ein/Aus ab). Beim Deaktivieren verstummen
+  klingende Noten sofort; beim Aktivieren setzt der Groove **phasengleich** zum
+  Taktraster wieder ein, als hätte er durchgehend gespielt – der Loop bleibt über
+  eine Stummschaltung hinweg taktgenau ausgerichtet.
+
 Alle diese Regler werden vom Player geschluckt und nicht an das Instrument
 weitergegeben.
 
@@ -134,23 +146,24 @@ Umschaltentscheidung in die Scripter-Konsole zu schreiben – so siehst du am
 schnellsten, was deine Tasten senden, und kannst sie bei Bedarf auf
 Momentary-/Trigger-Modus stellen.
 
-## Als Metronom verwenden
+## Wie ein Metronom starten und stoppen
 
-Für einen Groove, der mit MainStages Metronom-Schalter startet und stoppt, legst
-du den Player auf den **Metronom**-Kanalzug und gibst ihm ein echtes Kit:
+Die naheliegende Idee – den Player auf MainStages **Metronom**-Kanalzug zu legen,
+damit dessen Schalter den Groove steuert – funktioniert **nicht**:
+Metronom-Kanalzüge geben kein MIDI an Scripter weiter. Nimm stattdessen den
+**Enable CC**:
 
-1. Klicke im Metronom-Kanalzug auf den Instrument-Steckplatz mit **Klopfgeist**
-   (dem Klick) und wähle stattdessen **Drum Kit Designer**. Drum Kit Designer
-   folgt dem General-MIDI-Schlagzeug-Layout, sodass Kick, Snare und Hi-Hat des
-   Players auf den richtigen Klängen landen.
-2. Füge **Scripter** in den MIDI-FX-Steckplatz dieses Kanalzugs ein und den Player
-   wie oben.
-3. Schalte **Block Incoming Notes** ein (siehe unten).
+1. Lege den Player auf einen normalen Instrument-Kanalzug mit echtem Kit (z. B.
+   **Drum Kit Designer**, der dem General-MIDI-Schlagzeug-Layout folgt, sodass
+   Kick, Snare und Hi-Hat richtig landen).
+2. Füge im Layout-Modus eine Taste hinzu und weise ihr die **Enable-CC**-Nummer
+   zu (Standard 24). Mach sie zu einer **Rasttaste** (Toggle), damit sie 127 / 0
+   sendet.
 
-Jetzt schaltet der Metronom-Schalter deinen Groove ein und aus, und du hörst ein
-Kit statt eines Klicks. (Lieber einfach halten? Lass den Player auf dem eigenen
-Kanalzug deines Schlagzeug-Instruments – dann spielt er immer, wenn MainStage
-läuft.)
+Diese Taste startet und stoppt den Groove nun auf Wunsch, sofort, während der
+Loop taktgenau bleibt – dein freihändiges Metronom, mit echtem Kit statt Klick.
+(Lieber immer an? Lass **Enable CC** einfach auf 0, um den Regler zu
+deaktivieren – dann spielt der Groove, sobald MainStage läuft.)
 
 ## „Block Incoming Notes“
 
@@ -159,12 +172,8 @@ Incoming Notes** (eingehende Noten blockieren), standardmäßig aktiviert.
 
 Wenn es an ist, werden MIDI-Noten, die *in den Player hineinkommen*, verschluckt,
 sodass du nur den vom Player erzeugten Groove hörst. (Andere Nachrichten –
-Sustain, CC, Pitch Bend – werden weiterhin durchgelassen.)
-
-Genau das macht den Metronom-Kanalzug sauber: MainStages Metronom sendet weiterhin
-seine eigenen Klick-Noten an das Instrument, und sie zu blockieren lässt den
-Metronom-Schalter deinen Groove schalten, *ohne* dass der Klick darunter
-mitklingt.
+Sustain, CC, Pitch Bend – werden weiterhin durchgelassen, auch die vom Player
+genutzten Umschalt-CCs.)
 
 Schalte es aus, wenn eingehende Noten das Instrument doch erreichen sollen – zum
 Beispiel, wenn du dasselbe Kit zusätzlich über ein Pad oder eine Tastatur durch
