@@ -165,6 +165,33 @@ Loop taktgenau bleibt – dein freihändiges Metronom, mit echtem Kit statt Klic
 (Lieber immer an? Lass **Enable CC** einfach auf 0, um den Regler zu
 deaktivieren – dann spielt der Groove, sobald MainStage läuft.)
 
+## Auf Concert-Ebene einfügen (wichtig)
+
+Damit der Groove in jedem Patch verfügbar ist, legst du seinen Kanalzug auf die
+**Concert-Ebene**. Achte auf eine MainStage-Regel: Ein Software-Instrument auf
+Concert-Ebene hat **Vorrang vor den Patch-/Set-Instrumenten in seinem
+Tastaturbereich** – ein Kanalzug mit dem *vollen* Tastaturbereich schluckt also
+jede Note, und deine anderen Klänge verstummen. (Das ist eine Routing-Regel am
+Tastaturbereich, sie greift also selbst bei umgangenem Scripter und Instrument.)
+
+Der Fix ist einfach, denn der Player braucht **keine Tastatureingabe** – er
+erzeugt seinen Groove aus dem Host-Transport. Schieb den Bereich des Kanalzugs
+also aus dem Weg:
+
+1. Wähle den Drum-Kanalzug auf Concert-Ebene aus.
+2. Öffne im **Kanalzug-Inspektor** den Tastaturbereich- / **Layer-und-Split**-
+   Editor und setze den Bereich auf eine **einzelne, ungenutzte Note** (z. B. die
+   tiefste Taste, die du nie spielst), statt der ganzen Tastatur.
+
+Deine Patches bekommen ihr MIDI zurück, und der Groove spielt weiter – Scripter
+sendet seine Drum-Noten *nach* dem Tastaturbereich-Filter, sie erreichen das Kit
+also weiterhin. Die Umschalt-CCs sind Control Changes, keine Noten, ein
+schmalerer Bereich filtert sie also nicht (prüfe mit `TRACE = true`, falls
+unsicher; routet ein Controller sie seltsam, gib dem Drum-Kanalzug einen
+MIDI-Eingangskanal/-Port, den deine Tastatur nicht spielt, und sende die CCs
+dorthin). Gar keine globale Übersteuerung gewünscht? Leg den Kanalzug
+stattdessen auf **Patch- oder Set-Ebene**, nur dort, wo du den Groove willst.
+
 ## „Block Incoming Notes“
 
 Neben den Part-Umschaltreglern oben hat der Player ein Kontrollkästchen **Block

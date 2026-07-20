@@ -155,6 +155,31 @@ loop stays locked to the bar — your hands-free metronome, with a real kit
 instead of a click. (Prefer it always-on? Just leave **Enable CC** at 0 to
 disable the control, and the groove plays whenever MainStage is playing.)
 
+## Adding it at the concert level (important)
+
+To have the groove available across every patch, you'll put its channel strip at
+the **concert level**. Watch out for one MainStage rule: a concert-level software
+instrument **takes precedence over the patch/set instruments in its key range** —
+so a strip with the *full* keyboard range silently captures every note and your
+other sounds go dead. (It's a routing rule tied to the key range, so it bites
+even with the Scripter and instrument bypassed.)
+
+The fix is easy, because the player needs **no keyboard input** — it generates
+its groove from the host transport. So shrink the strip's range out of the way:
+
+1. Select the concert-level drum strip.
+2. In the **Channel Strip Inspector**, open the key-range / **Layers & splits**
+   editor and set the range to a **single unused note** (e.g. the lowest key you
+   never play), instead of the full keyboard.
+
+Your patches get their MIDI back, and the groove keeps playing — Scripter emits
+its drum notes *after* the input key-range filter, so they still reach the kit.
+The switch CCs are Control Changes, not notes, so a narrowed range doesn't filter
+them (confirm with `TRACE = true` if unsure; if a controller routes them oddly,
+give the drum strip a MIDI Input channel/port your keyboard doesn't play and send
+the CCs there). Prefer not to override globally at all? Put the strip at the
+**patch or set level** instead, only where you want the groove.
+
 ## "Block Incoming Notes"
 
 Alongside the part-switching controls above, the player has a checkbox **Block
