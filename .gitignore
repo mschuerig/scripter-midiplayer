@@ -21,3 +21,6 @@
 
 # BMad skills live here but are not part of the repo (recreate via the BMad installer)
 /.claude/
+
+# bmad-loop install + runtime (hook, policy, runs, cache) — recreate via the installer
+/.bmad-loop/
