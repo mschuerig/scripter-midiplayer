@@ -67,22 +67,36 @@ test("patternToSmf -> parseSmf -> notesToPattern round-trips a known pattern", f
 // Template round-trip: replace then re-parse
 // ---------------------------------------------------------------------------
 
-test("replacePatternBlock(template, render(P)) then parsePatternFromScript returns P", function () {
+test("replacePatternBlock(template, renderPartsBlock(parts)) then parsePartsFromScript returns the parts", function () {
   var templateText = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
 
-  var P = [
-    { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },
-    { offset: 0.5, pitch: 42, velocity: 64, length: 0.25 },
-    { offset: 1.0, pitch: 38, velocity: 100, length: 0.5 }
+  var parts = [
+    {
+      name: "verse",
+      cc: 20,
+      loopBeats: 4,
+      pattern: [
+        [0.0, 36, 110, 0.1],
+        [0.5, 42, 64, 0.25],
+        [1.0, 38, 100, 0.5]
+      ]
+    },
+    {
+      name: "chorus",
+      cc: 21,
+      loopBeats: 8,
+      pattern: [
+        [0.0, 36, 120, 0.1],
+        [4.0, 38, 100, 0.1]
+      ]
+    }
   ];
-  var loopBeats = 4;
 
-  var block = C.renderPatternBlock(P, loopBeats);
+  var block = C.renderPartsBlock(parts);
   var script = C.replacePatternBlock(templateText, block);
 
-  var parsed = C.parsePatternFromScript(script);
-  expect(parsed.loopBeats).toBe(4);
-  expect(parsed.pattern).toEqual(P);
+  var parsed = C.parsePartsFromScript(script);
+  expect(parsed.parts).toEqual(parts);
 });
 
 test("replacePatternBlock preserves every byte outside the marker region", function () {
@@ -278,6 +292,221 @@ test("notesToPattern normalizes offsets into [0, loopBeats)", function () {
 });
 
 // ---------------------------------------------------------------------------
+// renderPartsBlock: tuple formatting, element/key order, no trailing comma
+// ---------------------------------------------------------------------------
+
+test("renderPartsBlock emits the multi-part tuple style exactly", function () {
+  var block = C.renderPartsBlock([
+    { name: "backbeat", cc: 0, loopBeats: 4, pattern: [
+      [0, 42, 80, 0.1],
+      [1, 38, 100, 0.1]
+    ] }
+  ]);
+  var expected =
+    "var PARTS = [\n" +
+    "  { name: \"backbeat\", cc: 0, loopBeats: 4, pattern: [\n" +
+    "    [0.0, 42, 80, 0.1],\n" +
+    "    [1.0, 38, 100, 0.1]\n" +
+    "  ] }\n" +
+    "];";
+  expect(block).toBe(expected);
+});
+
+test("renderPartsBlock: decimal offsets/lengths, integer pitch/velocity, no trailing commas", function () {
+  var block = C.renderPartsBlock([
+    { name: "a", cc: 20, loopBeats: 8, pattern: [[2, 42, 80, 0.25]] },
+    { name: "b", cc: 21, loopBeats: 4, pattern: [[0, 36, 110, 0.1]] }
+  ]);
+  // tuple element order offset, pitch, velocity, length; integer offset with a decimal
+  expect(block).toContain("[2.0, 42, 80, 0.25]");
+  // sole tuple in a part has no trailing comma before its closing bracket
+  expect(block).toContain("[2.0, 42, 80, 0.25]\n  ] }");
+  // whole loopBeats stays an integer
+  expect(block).toContain("loopBeats: 8");
+  // the last part has no trailing comma before the array close
+  expect(block).toContain("[0.0, 36, 110, 0.1]\n  ] }\n];");
+  // a non-final part DOES carry a trailing comma
+  expect(block).toContain("  ] },\n  { name: \"b\"");
+});
+
+// ---------------------------------------------------------------------------
+// Multi-file bundle: N .mid files -> N parts (drive the pure path)
+// ---------------------------------------------------------------------------
+
+test("to-script pure path: two SMF fixtures bundle into two parts", function () {
+  // Two distinct grooves baked to SMF, then read back the way `to-script` does.
+  var A = [{ offset: 0.0, pitch: 36, velocity: 110, length: 0.25 }];
+  var B = [
+    { offset: 0.0, pitch: 42, velocity: 80, length: 0.1 },
+    { offset: 2.0, pitch: 38, velocity: 100, length: 0.1 }
+  ];
+  var smfA = C.patternToSmf(A, 4, {});
+  var smfB = C.patternToSmf(B, 4, {});
+
+  function fileToPart(name, bytes) {
+    var res = C.notesToPattern(C.parseSmf(bytes), {});
+    var tuples = res.pattern.map(function (ev) {
+      return [ev.offset, ev.pitch, ev.velocity, ev.length];
+    });
+    return { name: name, cc: 0, loopBeats: res.loopBeats, pattern: tuples };
+  }
+
+  var parts = [fileToPart("a", smfA), fileToPart("b", smfB)];
+  var block = C.renderPartsBlock(parts);
+  var template = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
+  var script = C.replacePatternBlock(template, block);
+
+  var reparsed = C.parsePartsFromScript(script).parts;
+  expect(reparsed.length).toBe(2);
+  expect(reparsed[0].name).toBe("a");
+  expect(reparsed[0].pattern.length).toBe(1);
+  expect(reparsed[1].name).toBe("b");
+  expect(reparsed[1].pattern.length).toBe(2);
+});
+
+test("sanitizePartName strips directory + extension and cleans the basename", function () {
+  expect(C.sanitizePartName("/path/to/My Groove.mid")).toBe("My Groove");
+  expect(C.sanitizePartName("beat.MIDI")).toBe("beat");
+  expect(C.sanitizePartName("weird@name!.mid")).toBe("weird name");
+});
+
+// ---------------------------------------------------------------------------
+// Legacy tolerance: parsePartsFromScript reads old formats as one/more parts
+// ---------------------------------------------------------------------------
+
+test("parsePartsFromScript reads a legacy single PATTERN/LOOP_BEATS script as one part", function () {
+  var s =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PATTERN = [\n" +
+    "  { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },\n" +
+    "  { offset: 2.0, pitch: 38, velocity: 100, length: 0.1 }\n" +
+    "];\n\nvar LOOP_BEATS = 4;\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  var parsed = C.parsePartsFromScript(s);
+  expect(parsed.parts.length).toBe(1);
+  expect(parsed.parts[0].name).toBe("part1");
+  expect(parsed.parts[0].cc).toBe(0);
+  expect(parsed.parts[0].loopBeats).toBe(4);
+  expect(parsed.parts[0].pattern).toEqual([
+    [0.0, 36, 110, 0.1],
+    [2.0, 38, 100, 0.1]
+  ]);
+});
+
+test("update migrates a legacy PATTERN/LOOP_BEATS block onto the PARTS engine", function () {
+  // A legacy script's block references PATTERN, but the refreshed engine reads
+  // PARTS — so `update` must re-render the parsed parts into a PARTS block (a
+  // verbatim splice would leave PARTS undefined and the script would not load).
+  var legacy =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PATTERN = [\n" +
+    "  { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 }\n" +
+    "];\n\nvar LOOP_BEATS = 4;\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  var template = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
+
+  // Mirror the CLI `update` migration branch exactly.
+  var block = C.renderPartsBlock(C.parsePartsFromScript(legacy).parts);
+  var updated = C.replacePatternBlock(template, block);
+
+  // The emitted block defines PARTS, not a bare legacy PATTERN.
+  var region = C.extractPatternBlock(updated);
+  expect(region).toContain("var PARTS");
+  expect(region).not.toContain("var PATTERN");
+  // And it reparses to the migrated single part.
+  var parsed = C.parsePartsFromScript(updated);
+  expect(parsed.parts.length).toBe(1);
+  expect(parsed.parts[0].loopBeats).toBe(4);
+  expect(parsed.parts[0].pattern).toEqual([[0.0, 36, 110, 0.1]]);
+});
+
+test("parsePartsFromScript reads a legacy object-form PARTS (pattern of {offset,...})", function () {
+  var s =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PARTS = [\n" +
+    "  { name: \"old\", cc: 5, loopBeats: 4, pattern: [\n" +
+    "    { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },\n" +
+    "    { offset: 1.0, pitch: 38, velocity: 100, length: 0.2 }\n" +
+    "  ] }\n" +
+    "];\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  var parsed = C.parsePartsFromScript(s);
+  expect(parsed.parts.length).toBe(1);
+  expect(parsed.parts[0].name).toBe("old");
+  expect(parsed.parts[0].cc).toBe(5);
+  expect(parsed.parts[0].pattern).toEqual([
+    [0.0, 36, 110, 0.1],
+    [1.0, 38, 100, 0.2]
+  ]);
+});
+
+test("parsePartsFromScript reads a two-part tuple PARTS", function () {
+  var s =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PARTS = [\n" +
+    "  { name: \"a\", cc: 20, loopBeats: 4, pattern: [\n" +
+    "    [0.0, 36, 110, 0.1]\n" +
+    "  ] },\n" +
+    "  { name: \"b\", cc: 21, loopBeats: 8, pattern: [\n" +
+    "    [0.0, 38, 100, 0.1],\n" +
+    "    [4.0, 42, 80, 0.1]\n" +
+    "  ] }\n" +
+    "];\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  var parts = C.parsePartsFromScript(s).parts;
+  expect(parts.length).toBe(2);
+  expect(parts[0]).toEqual({ name: "a", cc: 20, loopBeats: 4, pattern: [[0.0, 36, 110, 0.1]] });
+  expect(parts[1].loopBeats).toBe(8);
+  expect(parts[1].pattern.length).toBe(2);
+});
+
+test("parsePartsFromScript throws on a malformed tuple (extra element)", function () {
+  var s =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PARTS = [\n" +
+    "  { name: \"a\", cc: 0, loopBeats: 4, pattern: [\n" +
+    "    [0.0, 36, 110, 0.1, 5]\n" +
+    "  ] }\n" +
+    "];\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  expect(function () {
+    C.parsePartsFromScript(s);
+  }).toThrow();
+});
+
+// ---------------------------------------------------------------------------
+// to-midi --part: select the right part (drive selectPart on parsed parts)
+// ---------------------------------------------------------------------------
+
+test("selectPart picks by 1-based index, by name, and defaults to part 1", function () {
+  var parts = [
+    { name: "a", cc: 0, loopBeats: 4, pattern: [[0.0, 36, 110, 0.1]] },
+    { name: "b", cc: 0, loopBeats: 4, pattern: [[0.0, 38, 100, 0.1]] }
+  ];
+  expect(C.selectPart(parts, undefined).name).toBe("a");
+  expect(C.selectPart(parts, "2").name).toBe("b");
+  expect(C.selectPart(parts, "a").name).toBe("a");
+  expect(C.selectPart(parts, "b").name).toBe("b");
+  expect(function () { C.selectPart(parts, "9"); }).toThrow();
+  expect(function () { C.selectPart(parts, "missing"); }).toThrow();
+});
+
+test("to-midi pure path: the selected part's tuples convert to an SMF", function () {
+  var parts = [
+    { name: "kick", cc: 0, loopBeats: 4, pattern: [[0.0, 36, 110, 0.25]] },
+    { name: "snare", cc: 0, loopBeats: 4, pattern: [[1.0, 38, 100, 0.5]] }
+  ];
+  var chosen = C.selectPart(parts, "snare");
+  var patObjs = chosen.pattern.map(function (ev) {
+    return { offset: ev[0], pitch: ev[1], velocity: ev[2], length: ev[3] };
+  });
+  var bytes = C.patternToSmf(patObjs, chosen.loopBeats, { ppq: 480 });
+  var reparsed = C.parseSmf(bytes);
+  expect(reparsed.notes.length).toBe(1);
+  expect(reparsed.notes[0].pitch).toBe(38);
+});
+
+// ---------------------------------------------------------------------------
 // Malformed-reparse: fail loudly instead of silently dropping notes
 // ---------------------------------------------------------------------------
 
@@ -382,4 +611,77 @@ test("example-player.js matches src/midi-player.js (run `bun run midi2scripter.j
   var player = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
   var example = fs.readFileSync(path.join(__dirname, "example-player.js"), "utf8");
   expect(example).toBe(player);
+});
+
+// ---------------------------------------------------------------------------
+// Review-driven hardening
+// ---------------------------------------------------------------------------
+
+test("selectPart matches an all-digit part name before treating it as an index", function () {
+  var parts = [{ name: "2" }, { name: "x" }];
+  // "2" is an exact name here -> the part literally named "2" (index 0).
+  expect(C.selectPart(parts, "2")).toBe(parts[0]);
+  // With no name match, a bare integer still selects by 1-based index.
+  var ab = [{ name: "a" }, { name: "b" }];
+  expect(C.selectPart(ab, "2")).toBe(ab[1]);
+});
+
+test("parsePartsFromScript throws on a body mixing tuple and object events (no silent drop)", function () {
+  var s =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PARTS = [\n" +
+    "  { name: \"mix\", cc: 0, loopBeats: 4, pattern: [\n" +
+    "    [0.0, 36, 110, 0.1],\n" +
+    "    { offset: 1.0, pitch: 38, velocity: 100, length: 0.1 }\n" +
+    "  ] }\n" +
+    "];\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  expect(function () {
+    C.parsePartsFromScript(s);
+  }).toThrow();
+});
+
+test("parsePartsFromScript accepts single-quoted part names (hand-edit tolerance)", function () {
+  var s =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PARTS = [\n" +
+    "  { name: 'verse', cc: 7, loopBeats: 4, pattern: [\n" +
+    "    [0.0, 36, 110, 0.1]\n" +
+    "  ] }\n" +
+    "];\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  var parsed = C.parsePartsFromScript(s);
+  expect(parsed.parts.length).toBe(1);
+  expect(parsed.parts[0].name).toBe("verse");
+  expect(parsed.parts[0].cc).toBe(7);
+});
+
+test("update migrates a legacy OBJECT-form PARTS block onto the tuple engine", function () {
+  // The engine indexes tuples (ev[0..3]); splicing object literals verbatim
+  // would play nothing. Mirror the CLI update re-render path for a non-tuple block.
+  var objScript =
+    "// MIDI-PLAYER:PATTERN-START\n" +
+    "var PARTS = [\n" +
+    "  { name: \"old\", cc: 5, loopBeats: 4, pattern: [\n" +
+    "    { offset: 0.0, pitch: 36, velocity: 110, length: 0.1 },\n" +
+    "    { offset: 1.0, pitch: 38, velocity: 100, length: 0.2 }\n" +
+    "  ] }\n" +
+    "];\n" +
+    "// MIDI-PLAYER:PATTERN-END\n";
+  var template = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
+
+  var block = C.renderPartsBlock(C.parsePartsFromScript(objScript).parts);
+  var updated = C.replacePatternBlock(template, block);
+
+  var region = C.extractPatternBlock(updated);
+  expect(region).toContain("pattern: [");
+  // The emitted block is tuple form (no object literals survive).
+  expect(region).not.toContain("offset:");
+  var parsed = C.parsePartsFromScript(updated);
+  expect(parsed.parts[0].name).toBe("old");
+  expect(parsed.parts[0].cc).toBe(5);
+  expect(parsed.parts[0].pattern).toEqual([
+    [0.0, 36, 110, 0.1],
+    [1.0, 38, 100, 0.2]
+  ]);
 });
