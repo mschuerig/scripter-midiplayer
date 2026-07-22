@@ -8,8 +8,8 @@
 //
 // Several grooves are bundled as switchable PARTS. CCs select the active part
 // (by value, by prev/next cycling, or a dedicated CC per part) and a CC
-// restarts the current part; every switch takes effect on the next bar's beat
-// 1, so it stays musical and locked to the downbeat.
+// rewinds the current part to its start; every switch takes effect on the next
+// bar's beat 1, so it stays musical and locked to the downbeat.
 //
 // On/off is controlled by the host: Play (and, on the metronome strip, the
 // metronome toggle) gates playback. Map the plugin's bypass to a MainStage
@@ -20,7 +20,7 @@ var NeedsTimingInfo = true;
 // Toolchain version. Single source of truth: midi2scripter.js reads this out of
 // the embedded engine, so the converter, the bundled player, and every baked
 // script all report the same version. Bump on any engine or converter change.
-var VERSION = "1.0.1";
+var VERSION = "1.0.2";
 
 // Flip to true to print switch diagnostics to the Scripter console via Trace()
 // — the raw incoming CC stream (number + value) and every switch decision.
@@ -50,7 +50,7 @@ var TRACE = false;
 //   "Select Part CC"    : value n selects part n (1-based).
 //   "Previous/Next Part CC" : cycle to the prev/next part (wraps).
 //   "Part N (name) CC"  : a dedicated CC per part selects it directly.
-//   "Restart CC"        : restarts the current part on the next downbeat.
+//   "Rewind CC"         : rewinds the current part to its start on the next downbeat.
 // Set TRACE = true (above) to log the incoming CC stream + switch decisions.
 //
 // To drop in a baked Drummer/MuseScore groove, paste its note tuples here in
@@ -335,14 +335,14 @@ function handleControlCC(event) {
   // presses within a bar accumulate instead of collapsing to a single step.
   var refPart = STATE.pending ? STATE.pending.part : STATE.activePart;
 
-  // Restart the current part on the next downbeat. A matching Restart CC is
-  // always consumed — value 0 (e.g. a footswitch's release) is swallowed with
-  // no restart, so the release never leaks to the instrument downstream.
-  var restartCc = GetParameter("Restart CC");
-  if (restartCc > 0 && event.number === restartCc) {
+  // Rewind the current part to its start on the next downbeat. A matching Rewind
+  // CC is always consumed — value 0 (e.g. a footswitch's release) is swallowed
+  // with no rewind, so the release never leaks to the instrument downstream.
+  var rewindCc = GetParameter("Rewind CC");
+  if (rewindCc > 0 && event.number === rewindCc) {
     if (event.value > 0) {
       STATE.pending = { part: STATE.activePart, atBeat: atBeat };
-      trace("Restart CC " + event.number + " v" + event.value + " -> restart part " + STATE.activePart + " @beat " + atBeat);
+      trace("Rewind CC " + event.number + " v" + event.value + " -> rewind part " + STATE.activePart + " @beat " + atBeat);
     }
     return true;
   }
@@ -440,7 +440,7 @@ function Reset() {
 
 // PluginParameters is assembled at load time. All switch controls are
 // independent and coexist — assign whichever a controller can send. A CC of 0
-// disables that control. Order: Block Incoming Notes, Enable CC, Restart CC,
+// disables that control. Order: Block Incoming Notes, Enable CC, Rewind CC,
 // Select Part CC, Previous/Next Part CC, then one "Part N (name) CC" per part.
 var PluginParameters = [];
 (function buildPluginParameters() {
@@ -456,7 +456,7 @@ var PluginParameters = [];
   }
   PluginParameters.push({ name: "Block Incoming Notes", type: "checkbox", defaultValue: 1 });
   PluginParameters.push(ccParam("Enable CC", 24));
-  PluginParameters.push(ccParam("Restart CC", 21));
+  PluginParameters.push(ccParam("Rewind CC", 21));
   PluginParameters.push(ccParam("Select Part CC", 20));
   PluginParameters.push(ccParam("Previous Part CC", 22));
   PluginParameters.push(ccParam("Next Part CC", 23));

@@ -607,9 +607,9 @@ test("PLAYER_TEMPLATE matches src/midi-player.js (run `bun run midi2scripter.js 
   expect(C.PLAYER_TEMPLATE).toBe(player);
 });
 
-test("example-player.js matches src/midi-player.js (run `bun run midi2scripter.js build` if this fails)", function () {
+test("examples/example-player.js matches src/midi-player.js (run `bun run midi2scripter.js build` if this fails)", function () {
   var player = fs.readFileSync(path.join(__dirname, "src", "midi-player.js"), "utf8");
-  var example = fs.readFileSync(path.join(__dirname, "example-player.js"), "utf8");
+  var example = fs.readFileSync(path.join(__dirname, "examples", "example-player.js"), "utf8");
   expect(example).toBe(player);
 });
 

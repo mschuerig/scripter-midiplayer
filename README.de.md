@@ -24,7 +24,8 @@ Es gibt ein einziges Werkzeug, **midi2scripter**
 Kommandozeilen-Werkzeug. Es bäckt eine MIDI-Datei (zum Beispiel aus Logics
 Drummer) in ein fertiges Player-Script ein und kann einen Player wieder zurück
 in MIDI umwandeln. Ein fertiger Beispiel-Player
-([`example-player.js`](example-player.js)) liegt bei, sodass du gleich einen
+([`examples/example-player.js`](examples/example-player.js)) liegt bei, samt einem
+[Beispiel-MainStage-Concert](examples/README.de.md), sodass du gleich einen
 ausprobieren kannst, ohne vorher etwas einzubacken.
 
 ## bun installieren
@@ -56,7 +57,7 @@ direkt in die Zwischenablage.
 Der beiliegende Beispiel-Groove:
 
 ```sh
-pbcopy < example-player.js
+pbcopy < examples/example-player.js
 ```
 
 Oder deinen eigenen Groove aus einer MIDI-Datei einbacken:
@@ -124,9 +125,9 @@ gesetzt ist der jeweilige Regler deaktiviert.
 - **Part N (name) CC** – jeder Part hat zusätzlich seinen eigenen CC-Parameter
   (benannt nach dem Part). Sendest du diesen CC mit einem Wert größer als 0, wird
   sein Part gewählt.
-- **Restart CC** (Standard 21) – startet den *aktuellen* Part auf der nächsten
-  Eins von vorn, um nach einem Tempo- oder Abschnittswechsel wieder sauber in den
-  Loop einzurasten.
+- **Rewind CC** (Standard 21) – spult den *aktuellen* Part auf der nächsten Eins
+  an seinen Anfang zurück, um nach einem Tempo- oder Abschnittswechsel wieder
+  sauber in den Loop einzurasten.
 
 - **Enable CC** (Standard 24) – startet / stoppt den Groove sofort. Ein Wert
   **≥ 64** aktiviert die Ausgabe, **< 64** schaltet sie stumm (die 127/0 einer

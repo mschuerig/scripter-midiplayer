@@ -24,7 +24,8 @@ There's a single tool, **midi2scripter** ([`midi2scripter.js`](midi2scripter.js)
 — a self-contained command-line helper. It bakes a MIDI file (for example from
 Logic's Drummer) into a ready-to-paste player script, and can convert a player
 back to MIDI. A ready-made example player
-([`example-player.js`](example-player.js)) is included, so you can try one out
+([`examples/example-player.js`](examples/example-player.js)) is included, along
+with an [example MainStage concert](examples/README.md), so you can try one out
 without baking anything first.
 
 ## Install bun
@@ -56,7 +57,7 @@ clipboard.
 The included example groove:
 
 ```sh
-pbcopy < example-player.js
+pbcopy < examples/example-player.js
 ```
 
 Or bake your own groove from a MIDI file:
@@ -119,8 +120,8 @@ send. Each is a CC number parameter; set it to **0** to disable that control.
   buttons.
 - **Part N (name) CC** — each part also has its own dedicated CC parameter
   (named after the part). Sending that CC with any value above 0 selects it.
-- **Restart CC** (default 21) — restarts the *current* part from its beginning
-  on the next downbeat, for snapping back into the loop after a tempo or section
+- **Rewind CC** (default 21) — rewinds the *current* part to its beginning on
+  the next downbeat, for snapping back into the loop after a tempo or section
   change.
 
 - **Enable CC** (default 24) — starts / stops the groove immediately. A value
